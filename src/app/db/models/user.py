@@ -10,6 +10,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from .oauth_account import UserOauthAccount
+    from .tag import Tag
+    from .todo import Todo
     from .user_role import UserRole
 
 
@@ -20,8 +22,10 @@ class User(UUIDAuditBase):
 
     email: Mapped[str] = mapped_column(unique=True, index=True, nullable=False)
     name: Mapped[str | None] = mapped_column(nullable=True, default=None)
-    hashed_password: Mapped[str | None] = mapped_column(String(length=255), nullable=True, default=None)
-    avatar_url: Mapped[str | None] = mapped_column(String(length=500), nullable=True, default=None)
+    hashed_password: Mapped[str | None] = mapped_column(
+        String(length=255), nullable=True, default=None)
+    avatar_url: Mapped[str | None] = mapped_column(
+        String(length=500), nullable=True, default=None)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(default=False, nullable=False)
     is_verified: Mapped[bool] = mapped_column(default=False, nullable=False)
@@ -43,6 +47,18 @@ class User(UUIDAuditBase):
         lazy="noload",
         cascade="all, delete",
         uselist=True,
+    )
+    todos: Mapped[list[Todo]] = relationship(
+        back_populates="user",
+        lazy="selectin",
+        uselist=True,
+        cascade="all, delete-orphan",
+    )
+    tags: Mapped[list[Tag]] = relationship(
+        back_populates="user",
+        lazy="selectin",
+        uselist=True,
+        cascade="all, delete-orphan",
     )
 
     @hybrid_property

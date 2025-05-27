@@ -1,9 +1,9 @@
 # type: ignore
-"""init database
+"""init user and role
 
-Revision ID: af134decd569
-Revises:
-Create Date: 2025-05-20 03:12:10.034758+00:00
+Revision ID: b6185fb1f227
+Revises: 
+Create Date: 2025-05-23 03:48:10.261014+00:00
 
 """
 from __future__ import annotations
@@ -28,7 +28,7 @@ sa.EncryptedString = EncryptedString
 sa.EncryptedText = EncryptedText
 
 # revision identifiers, used by Alembic.
-revision = 'af134decd569'
+revision = 'b6185fb1f227'
 down_revision = None
 branch_labels = None
 depends_on = None
