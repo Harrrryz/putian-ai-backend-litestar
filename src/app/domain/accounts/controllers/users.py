@@ -73,7 +73,8 @@ class UserController(Controller):
         self,
         data: UserUpdate,
         users_service: UserService,
-        user_id: UUID = Parameter(title="User ID", description="The user to update."),
+        user_id: UUID = Parameter(
+            title="User ID", description="The user to update."),
     ) -> User:
         """Create a new user."""
         db_obj = await users_service.update(item_id=user_id, data=data.to_dict())

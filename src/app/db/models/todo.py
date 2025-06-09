@@ -10,18 +10,12 @@ from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, func
 from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.models.importance import Importance
+
 if TYPE_CHECKING:
     from .tag import Tag
     from .todo_tag import TodoTag
     from .user import User
-
-
-class Importance(enum.Enum):
-    """Importance levels for todo items."""
-    NONE = "none"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
 
 
 class Todo(UUIDAuditBase):
@@ -40,8 +34,6 @@ class Todo(UUIDAuditBase):
         default=datetime.now(UTC), nullable=False)
     plan_time: Mapped[datetime | None] = mapped_column(
         default=datetime.now(UTC), nullable=True)
-    content: Mapped[str] = mapped_column(
-        String(length=320), index=True, nullable=False)
     importance: Mapped[Importance] = mapped_column(Enum(
         Importance, name="importance_enum", native_enum=False), nullable=False, default=Importance.NONE)
     user_id: Mapped[UUID] = mapped_column(

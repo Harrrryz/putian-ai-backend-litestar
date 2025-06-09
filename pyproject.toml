@@ -49,7 +49,16 @@ app = "app.__main__:run_cli"
 
 
 [dependency-groups]
-dev = [{ include-group = "docs" }, { include-group = "linting" }, { include-group = "test" }]
+dev = [
+    { include-group = "docs" },
+    { include-group = "linting" },
+    { include-group = "test" },
+    { include-group = "notebook" },
+]
+notebook = [
+  "ipykernel>=6.29.5",
+  "notebook>=7.4.3",
+]
 docs = [
   "sphinx",
   "sphinx-autobuild",
@@ -280,6 +289,7 @@ known-first-party = ['tests', 'app']
 "tests/*.py" = ['D103', 'S101', 'D104']
 "tools/*.py" = ["INP001", "ERA001", "N999"]
 "tools/**/*.*" = ["D", "ARG", "EM", "TRY", "G", "FBT", "INP001"]
+"*.ipynb" = ["I001", "E402", "F401", "T201"]
 
 [tool.slotscheck]
 strict-imports = false

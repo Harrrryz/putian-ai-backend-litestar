@@ -63,6 +63,7 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
         from app.domain.accounts.guards import auth as jwt_auth
         from app.domain.accounts.services import RoleService, UserService
         from app.domain.system.controllers import SystemController
+        from app.domain.todo.controllers import TodoController
         from app.lib.exceptions import ApplicationError, exception_to_http_response
         from app.server import plugins
 
@@ -100,6 +101,7 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
                 AccessController,
                 UserController,
                 UserRoleController,
+                TodoController,
             ],
         )
         # signatures
