@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
+import boto3
+from dotenv import load_dotenv
 
 from advanced_alchemy.utils.text import slugify
 from litestar.data_extractors import RequestExtractorField
@@ -31,33 +33,44 @@ BASE_DIR: Final[Path] = module_to_os_path(DEFAULT_MODULE_NAME)
 class DatabaseSettings:
     ECHO: bool = field(default_factory=get_env("DATABASE_ECHO", False))
     """Enable SQLAlchemy engine logs."""
-    ECHO_POOL: bool = field(default_factory=get_env("DATABASE_ECHO_POOL", False))
+    ECHO_POOL: bool = field(
+        default_factory=get_env("DATABASE_ECHO_POOL", False))
     """Enable SQLAlchemy connection pool logs."""
-    POOL_DISABLED: bool = field(default_factory=get_env("DATABASE_POOL_DISABLED", False))
+    POOL_DISABLED: bool = field(
+        default_factory=get_env("DATABASE_POOL_DISABLED", False))
     """Disable SQLAlchemy pool configuration."""
-    POOL_MAX_OVERFLOW: int = field(default_factory=get_env("DATABASE_MAX_POOL_OVERFLOW", 10))
+    POOL_MAX_OVERFLOW: int = field(
+        default_factory=get_env("DATABASE_MAX_POOL_OVERFLOW", 10))
     """Max overflow for SQLAlchemy connection pool"""
     POOL_SIZE: int = field(default_factory=get_env("DATABASE_POOL_SIZE", 5))
     """Pool size for SQLAlchemy connection pool"""
-    POOL_TIMEOUT: int = field(default_factory=get_env("DATABASE_POOL_TIMEOUT", 30))
+    POOL_TIMEOUT: int = field(
+        default_factory=get_env("DATABASE_POOL_TIMEOUT", 30))
     """Time in seconds for timing connections out of the connection pool."""
-    POOL_RECYCLE: int = field(default_factory=get_env("DATABASE_POOL_RECYCLE", 300))
+    POOL_RECYCLE: int = field(
+        default_factory=get_env("DATABASE_POOL_RECYCLE", 300))
     """Amount of time to wait before recycling connections."""
-    POOL_PRE_PING: bool = field(default_factory=get_env("DATABASE_PRE_POOL_PING", False))
+    POOL_PRE_PING: bool = field(
+        default_factory=get_env("DATABASE_PRE_POOL_PING", False))
     """Optionally ping database before fetching a session from the connection pool."""
-    URL: str = field(default_factory=get_env("DATABASE_URL", "sqlite+aiosqlite:///db.sqlite3"))
+    URL: str = field(default_factory=get_env(
+        "DATABASE_URL", "sqlite+aiosqlite:///db.sqlite3"))
     """SQLAlchemy Database URL."""
     MIGRATION_CONFIG: str = field(
-        default_factory=get_env("DATABASE_MIGRATION_CONFIG", f"{BASE_DIR}/db/migrations/alembic.ini")
+        default_factory=get_env(
+            "DATABASE_MIGRATION_CONFIG", f"{BASE_DIR}/db/migrations/alembic.ini")
     )
     """The path to the `alembic.ini` configuration file."""
-    MIGRATION_PATH: str = field(default_factory=get_env("DATABASE_MIGRATION_PATH", f"{BASE_DIR}/db/migrations"))
+    MIGRATION_PATH: str = field(default_factory=get_env(
+        "DATABASE_MIGRATION_PATH", f"{BASE_DIR}/db/migrations"))
     """The path to the `alembic` database migrations."""
     MIGRATION_DDL_VERSION_TABLE: str = field(
-        default_factory=get_env("DATABASE_MIGRATION_DDL_VERSION_TABLE", "ddl_version")
+        default_factory=get_env(
+            "DATABASE_MIGRATION_DDL_VERSION_TABLE", "ddl_version")
     )
     """The name to use for the `alembic` versions table name."""
-    FIXTURE_PATH: str = field(default_factory=get_env("DATABASE_FIXTURE_PATH", f"{BASE_DIR}/db/fixtures"))
+    FIXTURE_PATH: str = field(default_factory=get_env(
+        "DATABASE_FIXTURE_PATH", f"{BASE_DIR}/db/fixtures"))
     """The path to JSON fixture files to load into tables."""
     _engine_instance: AsyncEngine | None = None
     """SQLAlchemy engine instance generated from settings."""
@@ -184,7 +197,8 @@ class ServerSettings:
     """Seconds to hold connections open (65 is > AWS lb idle timeout)."""
     RELOAD: bool = field(default_factory=get_env("LITESTAR_RELOAD", False))
     """Turn on hot reloading."""
-    RELOAD_DIRS: list[str] = field(default_factory=get_env("LITESTAR_RELOAD_DIRS", [f"{BASE_DIR}"]))
+    RELOAD_DIRS: list[str] = field(default_factory=get_env(
+        "LITESTAR_RELOAD_DIRS", [f"{BASE_DIR}"]))
     """Directories to watch for reloading."""
 
 
@@ -204,9 +218,11 @@ class LogSettings:
 
     Only emit logs at this level, or higher.
     """
-    OBFUSCATE_COOKIES: set[str] = field(default_factory=lambda: {"session", "XSRF-TOKEN"})
+    OBFUSCATE_COOKIES: set[str] = field(
+        default_factory=lambda: {"session", "XSRF-TOKEN"})
     """Request cookie keys to obfuscate."""
-    OBFUSCATE_HEADERS: set[str] = field(default_factory=lambda: {"Authorization", "X-API-KEY", "X-XSRF-TOKEN"})
+    OBFUSCATE_HEADERS: set[str] = field(
+        default_factory=lambda: {"Authorization", "X-API-KEY", "X-XSRF-TOKEN"})
     """Request header keys to obfuscate."""
     JOB_FIELDS: list[str] = field(
         default_factory=lambda: [
@@ -248,11 +264,14 @@ class LogSettings:
     )
     """Attributes of the [Response][litestar.response.Response] to be
     logged."""
-    SQLALCHEMY_LEVEL: int = field(default_factory=get_env("SQLALCHEMY_LOG_LEVEL", 30))
+    SQLALCHEMY_LEVEL: int = field(
+        default_factory=get_env("SQLALCHEMY_LOG_LEVEL", 30))
     """Level to log SQLAlchemy logs."""
-    ASGI_ACCESS_LEVEL: int = field(default_factory=get_env("ASGI_ACCESS_LOG_LEVEL", 30))
+    ASGI_ACCESS_LEVEL: int = field(
+        default_factory=get_env("ASGI_ACCESS_LOG_LEVEL", 30))
     """Level to log uvicorn access logs."""
-    ASGI_ERROR_LEVEL: int = field(default_factory=get_env("ASGI_ERROR_LOG_LEVEL", 30))
+    ASGI_ERROR_LEVEL: int = field(
+        default_factory=get_env("ASGI_ERROR_LOG_LEVEL", 30))
     """Level to log uvicorn error logs."""
 
 
@@ -262,27 +281,34 @@ class AppSettings:
 
     APP_LOC: str = "app.asgi:create_app"
     """Path to app executable, or factory."""
-    URL: str = field(default_factory=get_env("APP_URL", "http://localhost:8000"))
+    URL: str = field(default_factory=get_env(
+        "APP_URL", "http://localhost:8000"))
     """The frontend base URL"""
     DEBUG: bool = field(default_factory=get_env("LITESTAR_DEBUG", False))
     """Run `Litestar` with `debug=True`."""
     SECRET_KEY: str = field(
-        default_factory=get_env("SECRET_KEY", binascii.hexlify(os.urandom(32)).decode(encoding="utf-8")),
+        default_factory=get_env("SECRET_KEY", binascii.hexlify(
+            os.urandom(32)).decode(encoding="utf-8")),
     )
     """Application secret key."""
     NAME: str = field(default_factory=lambda: "app")
     """Application name."""
-    ALLOWED_CORS_ORIGINS: list[str] | str = field(default_factory=get_env("ALLOWED_CORS_ORIGINS", ["*"], list[str]))
+    ALLOWED_CORS_ORIGINS: list[str] | str = field(
+        default_factory=get_env("ALLOWED_CORS_ORIGINS", ["*"], list[str]))
     """Allowed CORS Origins"""
-    CSRF_COOKIE_NAME: str = field(default_factory=get_env("CSRF_COOKIE_NAME", "XSRF-TOKEN"))
+    CSRF_COOKIE_NAME: str = field(
+        default_factory=get_env("CSRF_COOKIE_NAME", "XSRF-TOKEN"))
     """CSRF Cookie Name"""
-    CSRF_COOKIE_SECURE: bool = field(default_factory=get_env("CSRF_COOKIE_SECURE", False))
+    CSRF_COOKIE_SECURE: bool = field(
+        default_factory=get_env("CSRF_COOKIE_SECURE", False))
     """CSRF Secure Cookie"""
     JWT_ENCRYPTION_ALGORITHM: str = field(default_factory=lambda: "HS256")
     """JWT Encryption Algorithm"""
-    GITHUB_OAUTH2_CLIENT_ID: str = field(default_factory=get_env("GITHUB_OAUTH2_CLIENT_ID", ""))
+    GITHUB_OAUTH2_CLIENT_ID: str = field(
+        default_factory=get_env("GITHUB_OAUTH2_CLIENT_ID", ""))
     """Github OAuth2 Client ID"""
-    GITHUB_OAUTH2_CLIENT_SECRET: str = field(default_factory=get_env("GITHUB_OAUTH2_CLIENT_SECRET", ""))
+    GITHUB_OAUTH2_CLIENT_SECRET: str = field(
+        default_factory=get_env("GITHUB_OAUTH2_CLIENT_SECRET", ""))
     """Github OAuth2 Client Secret"""
 
     @property
@@ -301,14 +327,46 @@ class AppSettings:
             if self.ALLOWED_CORS_ORIGINS.startswith("[") and self.ALLOWED_CORS_ORIGINS.endswith("]"):
                 try:
                     # Safely evaluate the string as a Python list.
-                    self.ALLOWED_CORS_ORIGINS = json.loads(self.ALLOWED_CORS_ORIGINS)
+                    self.ALLOWED_CORS_ORIGINS = json.loads(
+                        self.ALLOWED_CORS_ORIGINS)
                 except (SyntaxError, ValueError):
                     # Handle potential errors if the string is not a valid Python literal.
                     msg = "ALLOWED_CORS_ORIGINS is not a valid list representation."
                     raise ValueError(msg) from None
             else:
                 # Split the string by commas into a list if it is not meant to be a list representation.
-                self.ALLOWED_CORS_ORIGINS = [host.strip() for host in self.ALLOWED_CORS_ORIGINS.split(",")]
+                self.ALLOWED_CORS_ORIGINS = [
+                    host.strip() for host in self.ALLOWED_CORS_ORIGINS.split(",")]
+
+
+@dataclass
+class S3Settings:
+    """S3 Client configurations."""
+
+    ACCESS_KEY: str | None = field(default_factory=get_env("S3_ACCESS_KEY", None))
+    """S3 Access Key"""
+    SECRET_KEY: str | None = field(default_factory=get_env("S3_SECRET_KEY", None))
+    """S3 Secret Key"""
+    BUCKET_NAME: str | None = field(default_factory=get_env("S3_BUCKET_NAME", None))
+    """S3 Bucket Name"""
+    ENDPOINT_URL: str | None = field(default_factory=get_env("S3_ENDPOINT_URL", None))
+    """S3 Endpoint URL"""
+    REGION: str | None = field(default_factory=get_env("S3_REGION", None))
+    """S3 Region"""
+    _client: Any | None = None
+
+    @property
+    def client(self) -> Any:
+        """Get Boto3 S3 client."""
+        if self._client is None:
+            self._client = boto3.client(
+                "s3",
+                endpoint_url=self.ENDPOINT_URL,
+                aws_access_key_id=self.ACCESS_KEY,
+                aws_secret_access_key=self.SECRET_KEY,
+                region_name=self.REGION,
+            )
+        return self._client
 
 
 @dataclass
@@ -317,6 +375,7 @@ class Settings:
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
     log: LogSettings = field(default_factory=LogSettings)
+    s3: S3Settings = field(default_factory=S3Settings)
 
     @classmethod
     def from_env(cls, dotenv_filename: str = ".env") -> Settings:
@@ -326,7 +385,8 @@ class Settings:
         if env_file.is_file():
             from dotenv import load_dotenv
 
-            console.print(f"[yellow]Loading environment configuration from {dotenv_filename}[/]")
+            console.print(
+                f"[yellow]Loading environment configuration from {dotenv_filename}[/]")
 
             load_dotenv(env_file, override=True)
         return Settings()

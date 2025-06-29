@@ -29,6 +29,7 @@ dependencies = [
   "pydantic[email]>=2.11.4",
   "pre-commit>=4.2.0",
   "pytest>=8.3.5",
+  "boto3>=1.38.45",
 ]
 description = "Opinionated template for a Litestar application."
 keywords = ["litestar", "sqlalchemy", "alembic", "fullstack", "api", "asgi", "litestar"]
@@ -289,7 +290,7 @@ known-first-party = ['tests', 'app']
 "tests/*.py" = ['D103', 'S101', 'D104']
 "tools/*.py" = ["INP001", "ERA001", "N999"]
 "tools/**/*.*" = ["D", "ARG", "EM", "TRY", "G", "FBT", "INP001"]
-"*.ipynb" = ["I001", "E402", "F401", "T201"]
+"*.ipynb" = ["I001", "E402", "F401", "T201", "Q000"]
 
 [tool.slotscheck]
 strict-imports = false
