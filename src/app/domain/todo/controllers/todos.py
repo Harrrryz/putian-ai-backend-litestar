@@ -1,6 +1,7 @@
 import stat
+from inspect import Parameter
 from typing import Annotated
-from uuid import UUID
+from uuid import UUID  # noqa: TC003
 
 import structlog
 from advanced_alchemy.filters import FilterTypes
@@ -8,6 +9,7 @@ from advanced_alchemy.service import OffsetPagination
 from litestar import Controller, delete, get, patch, post
 from litestar.di import Provide
 from litestar.params import Dependency
+from sqlalchemy import Uuid
 
 import app.db.models as m
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
@@ -75,13 +77,16 @@ class TodoController(Controller):
         return todo_service.to_schema(updated_todo, schema_type=TodoModel)
 
     @delete(path="/{todo_id:uuid}", operation_id="delete_todo", status_code=200)
-    async def delete_todo(self, todo_id: str, todo_service: TodoService) -> str | TodoModel:
-        """Delete a specific todo item by ID."""
-        todo = await todo_service.get(todo_id)
-        if not todo:
-            return f"Todo item {todo_id} not found."
-        await todo_service.delete(todo)
-        return todo_service.to_schema(todo, schema_type=TodoModel)
+    async def delete_todo(self, todo_id: UUID, todo_service: TodoService) -> str | TodoModel:
+        try:
+            """Delete a specific todo item by ID."""
+            todo = await todo_service.get(todo_id)
+            if not todo:
+                return f"Todo item {todo_id} not found."
+            await todo_service.delete(todo_id)
+            return todo_service.to_schema(todo,     schema_type=TodoModel)
+        except Exception as e:
+            return f"Error deleting todo item {todo_id}: {str(e)}"
 
     @post(path="/create_tag", operation_id="create_tag")
     async def create_tag(self, current_user: m.User, data: TagCreate, tag_service: TagService, todo_service: TodoService) -> TagModel:
@@ -107,6 +112,7 @@ class TodoController(Controller):
             return f"Tag {tag_id} not found or does not belong to the user."
 
         await tag_service.delete(tag)
+
         return tag_service.to_schema(tag, schema_type=TagModel)
 
     @get(path="/tags", operation_id="list_tags")
