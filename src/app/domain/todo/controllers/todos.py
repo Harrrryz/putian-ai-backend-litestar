@@ -59,15 +59,18 @@ class TodoController(Controller):
         return todo_service.to_schema(todo_model, schema_type=TodoModel)
 
     @get(path="/{todo_id:uuid}", operation_id="get_todo")
-    async def get_todo(self, todo_id: str, todo_service: TodoService) -> TodoModel | str:
-        """Get a specific todo item by ID."""
-        todo = await todo_service.get(todo_id)
-        if not todo:
-            return f"Todo item {todo_id} not found."
-        return todo_service.to_schema(todo, schema_type=TodoModel)
+    async def get_todo(self, todo_id: UUID, todo_service: TodoService) -> TodoModel | str:
+        try:
+            """Get a specific todo item by ID."""
+            todo = await todo_service.get(todo_id)
+            if not todo:
+                return f"Todo item {todo_id} not found."
+            return todo_service.to_schema(todo, schema_type=TodoModel)
+        except Exception as e:
+            return f"Error retrieving todo item {todo_id}: {str(e)}"
 
     @patch(path="/{todo_id:uuid}", operation_id="update_todo")
-    async def update_todo(self, todo_id: str, data: TodoCreate, todo_service: TodoService) -> str | TodoModel:
+    async def update_todo(self, todo_id: UUID, data: TodoCreate, todo_service: TodoService) -> str | TodoModel:
         """Update a specific todo item by ID."""
         todo = await todo_service.get(todo_id)
         if not todo:

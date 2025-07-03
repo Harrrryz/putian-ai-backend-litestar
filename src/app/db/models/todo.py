@@ -29,7 +29,7 @@ class Todo(UUIDAuditBase):
     item: Mapped[str] = mapped_column(
         String(length=100), index=True, nullable=False)
     description: Mapped[str] = mapped_column(
-        String(length=1024), nullable=False)
+        String(length=1024), nullable=True)
     created_time: Mapped[datetime] = mapped_column(
         default=datetime.now(UTC), nullable=False)
     plan_time: Mapped[datetime | None] = mapped_column(
