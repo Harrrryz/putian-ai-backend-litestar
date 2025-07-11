@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime
 from uuid import UUID  # noqa: TC003
 
 from advanced_alchemy.repository import (
@@ -8,6 +10,8 @@ from advanced_alchemy.repository import (
 from advanced_alchemy.service import (
     SQLAlchemyAsyncRepositoryService,
 )
+from agents import Agent, OpenAIChatCompletionsModel
+from openai import AsyncOpenAI
 
 from app.db import models as m
 
