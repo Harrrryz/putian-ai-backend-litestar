@@ -7,9 +7,8 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, cast
-import boto3
-from dotenv import load_dotenv
 
+import boto3
 from advanced_alchemy.utils.text import slugify
 from litestar.data_extractors import RequestExtractorField
 from litestar.serialization import decode_json, encode_json
@@ -370,12 +369,23 @@ class S3Settings:
 
 
 @dataclass
+class AISettings:
+    """AI/LLM Client configurations."""
+
+    VOLCENGINE_API_KEY: str | None = field(default_factory=get_env("VOLCENGINE_API_KEY", None))
+    """VolcEngine API Key for Doubao models"""
+    VOLCENGINE_BASE_URL: str | None = field(default_factory=get_env("VOLCENGINE_BASE_URL", None))
+    """VolcEngine Base URL for API endpoints"""
+
+
+@dataclass
 class Settings:
     app: AppSettings = field(default_factory=AppSettings)
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
     server: ServerSettings = field(default_factory=ServerSettings)
     log: LogSettings = field(default_factory=LogSettings)
     s3: S3Settings = field(default_factory=S3Settings)
+    ai: AISettings = field(default_factory=AISettings)
 
     @classmethod
     def from_env(cls, dotenv_filename: str = ".env") -> Settings:

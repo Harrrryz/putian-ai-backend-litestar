@@ -1,7 +1,5 @@
-import stat
-from inspect import Parameter
 from typing import Annotated
-from uuid import UUID  # noqa: TC003
+from uuid import UUID
 
 import structlog
 from advanced_alchemy.filters import FilterTypes
@@ -9,15 +7,21 @@ from advanced_alchemy.service import OffsetPagination
 from litestar import Controller, delete, get, patch, post
 from litestar.di import Provide
 from litestar.params import Dependency
-from sqlalchemy import Uuid
+from pydantic import BaseModel
 
 import app.db.models as m
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
 from app.domain.todo.schemas import TagCreate, TagModel, TodoCreate, TodoModel
 from app.domain.todo.services import TagService, TodoService
+from app.domain.todo.todo_agents import get_todo_agent, set_agent_context
 from app.lib.deps import create_filter_dependencies
 
 logger = structlog.get_logger()
+
+
+class AgentTodoRequest(BaseModel):
+    """Request schema for AI agent todo creation."""
+    message: str
 
 
 class TodoController(Controller):
@@ -67,7 +71,7 @@ class TodoController(Controller):
                 return f"Todo item {todo_id} not found."
             return todo_service.to_schema(todo, schema_type=TodoModel)
         except Exception as e:
-            return f"Error retrieving todo item {todo_id}: {str(e)}"
+            return f"Error retrieving todo item {todo_id}: {e!s}"
 
     @patch(path="/{todo_id:uuid}", operation_id="update_todo")
     async def update_todo(self, todo_id: UUID, data: TodoCreate, todo_service: TodoService) -> str | TodoModel:
@@ -89,7 +93,7 @@ class TodoController(Controller):
             await todo_service.delete(todo_id)
             return todo_service.to_schema(todo,     schema_type=TodoModel)
         except Exception as e:
-            return f"Error deleting todo item {todo_id}: {str(e)}"
+            return f"Error deleting todo item {todo_id}: {e!s}"
 
     @post(path="/create_tag", operation_id="create_tag")
     async def create_tag(self, current_user: m.User, data: TagCreate, tag_service: TagService, todo_service: TodoService) -> TagModel:
@@ -124,3 +128,38 @@ class TodoController(Controller):
         user_filter = m.Tag.user_id == current_user.id
         results, total = await tag_service.list_and_count(user_filter, *filters)
         return tag_service.to_schema(data=results, total=total, schema_type=TagModel, filters=filters)
+
+    @post(path="/agent-create", operation_id="agent_create_todo")
+    async def agent_create_todo(
+        self,
+        current_user: m.User,
+        data: AgentTodoRequest,
+        todo_service: TodoService,
+        tag_service: TagService
+    ) -> dict[str, str]:
+        """Create a todo using AI agent based on natural language input."""
+        try:
+            # Import Runner from agents
+            from agents import Runner
+            
+            # Set the agent context with services and user
+            set_agent_context(todo_service, tag_service, current_user.id)
+
+            # Get the configured agent
+            agent = get_todo_agent()
+
+            # Process the user's message with the agent using Runner
+            result = await Runner.run(agent, data.message)
+
+            return {
+                "status": "success",
+                "message": "Todo processed by AI agent",
+                "agent_response": str(result.final_output)
+            }
+
+        except Exception as e:
+            logger.exception("Agent todo creation failed", error=str(e), user_id=current_user.id)
+            return {
+                "status": "error",
+                "message": f"Failed to process todo with AI agent: {e!s}"
+            }

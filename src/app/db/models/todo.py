@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID  # noqa: TC003
 
 from advanced_alchemy.base import UUIDAuditBase
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy import Enum, ForeignKey, String
 from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,9 +30,9 @@ class Todo(UUIDAuditBase):
     description: Mapped[str] = mapped_column(
         String(length=1024), nullable=True)
     created_time: Mapped[datetime] = mapped_column(
-        default=datetime.now(UTC), nullable=False)
+        default=lambda: datetime.now(UTC), nullable=False)
     plan_time: Mapped[datetime | None] = mapped_column(
-        default=datetime.now(UTC), nullable=True)
+        nullable=True)
     importance: Mapped[Importance] = mapped_column(Enum(
         Importance, name="importance_enum", native_enum=False), nullable=False, default=Importance.NONE)
     user_id: Mapped[UUID] = mapped_column(
