@@ -59,6 +59,7 @@ class TodoController(Controller):
         """Create a new todo item."""
         todo_dict = data.to_dict()
         todo_dict["user_id"] = current_user.id
+        print(todo_dict)
         todo_model = await todo_service.create(todo_dict)
         return todo_service.to_schema(todo_model, schema_type=TodoModel)
 
@@ -141,7 +142,7 @@ class TodoController(Controller):
         try:
             # Import Runner from agents
             from agents import Runner
-            
+
             # Set the agent context with services and user
             set_agent_context(todo_service, tag_service, current_user.id)
 
@@ -158,7 +159,8 @@ class TodoController(Controller):
             }
 
         except Exception as e:
-            logger.exception("Agent todo creation failed", error=str(e), user_id=current_user.id)
+            logger.exception("Agent todo creation failed",
+                             error=str(e), user_id=current_user.id)
             return {
                 "status": "error",
                 "message": f"Failed to process todo with AI agent: {e!s}"
