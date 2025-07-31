@@ -1,5 +1,8 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
+
+from agents import TResponseInputItem
 
 from app.config.base import get_settings
 from app.db.models.importance import Importance
@@ -48,3 +51,9 @@ class TagCreate(PydanticBaseModel):
     name: str
     color: str | None = None
     todo_id: UUID | None = None
+
+
+class AgentTodoResponse(PydanticBaseModel):
+    status: str
+    message: str
+    agent_response: list[dict[str, Any]]

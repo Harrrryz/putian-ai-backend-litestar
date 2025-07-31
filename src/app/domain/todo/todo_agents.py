@@ -6,6 +6,7 @@ from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
 from app.config.base import get_settings
+from app.db import models as m
 from app.db.models.importance import Importance
 from app.domain.todo.services import TagService, TodoService
 
@@ -23,6 +24,15 @@ class CreateTodoArgs(BaseModel):
         default="none", description="The importance level: none, low, medium, high")
 
 
+class DeleteTodoArgs(BaseModel):
+    plan_time: str | None = Field(
+        default=None, description="The planned date/time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
+    item: str = Field(
+        ...,
+        description="The name/title of the todo item to delete."
+    )
+
+
 # Global variables to hold services and user context
 _todo_service: TodoService | None = None
 _tag_service: TagService | None = None
@@ -35,6 +45,36 @@ def set_agent_context(todo_service: TodoService, tag_service: TagService, user_i
     _todo_service = todo_service
     _tag_service = tag_service
     _current_user_id = user_id
+
+
+async def delete_todo_impl(ctx: RunContextWrapper, args: str) -> str:
+    """Implementation of the delete_todo function."""
+    if not _todo_service or not _current_user_id:
+        return "Error: Agent context not properly initialized"
+
+    # Parse the arguments
+    try:
+        parsed_args = DeleteTodoArgs.model_validate_json(args)
+        plan_time = parsed_args.plan_time
+        item = parsed_args.item
+    except ValueError:
+        return f"Error: Invalid todo ID '{args}'"
+
+    # Delete the todo item
+    try:
+        todos = await _todo_service.list_and_count(
+            m.Todo.user_id == _current_user_id,
+            m.Todo.item == item,
+            m.Todo.plan_time == plan_time
+        )
+        if not todos:
+            return f"Todo item {item} not found."
+
+        await _todo_service.delete(item)
+    except Exception as e:
+        return f"Error deleting todo: {e!s}"
+    else:
+        return f"Successfully deleted todo {item} with plan time {plan_time}"
 
 
 async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
@@ -97,8 +137,14 @@ create_todo_tool = FunctionTool(
     on_invoke_tool=create_todo_impl,
 )
 
+delete_todo_tool = FunctionTool(
+    name="delete_todo",
+    description="Delete a todo item using the TodoService.",
+    params_json_schema=DeleteTodoArgs.model_json_schema(),
+    on_invoke_tool=delete_todo_impl,
+)
 
-SYSTEM_INSTRUCTIONS = f"""You are a helpful todo list assistant. You can create todo items based on user input.
+TODO_SYSTEM_INSTRUCTIONS = f"""You are a helpful todo list assistant. You can create, delete, change todo items based on user input.
 
 When creating todos:
 - Extract the main task as the 'item' (title)
@@ -108,6 +154,13 @@ When creating todos:
 - Suggest relevant tags like: 'work', 'personal', 'study', 'shopping', 'health', 'entertainment'
 
 If the user's input is unclear, ask for clarification. Always be helpful and create meaningful todos.
+
+When deleting todos:
+- Get the necessary information about the todo item to delete, such as 'item' (title) and 'plan_time' (if specified). If the user provides a specific date/time, use it to find the todo item.
+- If the user does not provide a specific date/time, ask the user to clarify which todo item they want to delete (e.g., by providing the title or other identifying information).
+
+
+If the user's input is unclear, ask for clarification. Always be helpful and ensure a smooth deletion process.
 
 Today's date is {datetime.now(tz=timezone.utc).strftime('%Y-%m-%d')}."""
 
@@ -126,7 +179,7 @@ def get_todo_agent() -> Agent:
 
     return Agent(
         name="TodoAssistant",
-        instructions=SYSTEM_INSTRUCTIONS,
+        instructions=TODO_SYSTEM_INSTRUCTIONS,
         model=model,
-        tools=[create_todo_tool]
+        tools=[create_todo_tool, delete_todo_tool]
     )

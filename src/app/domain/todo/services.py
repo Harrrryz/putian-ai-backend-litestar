@@ -10,6 +10,8 @@ from advanced_alchemy.service import (
 )
 
 from app.db import models as m
+from sqlalchemy import select
+from typing import List
 
 
 class TodoService(SQLAlchemyAsyncRepositoryService[m.Todo]):
