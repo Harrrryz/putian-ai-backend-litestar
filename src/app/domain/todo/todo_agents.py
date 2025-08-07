@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, RunContextWrapper
 from openai import AsyncOpenAI
@@ -25,12 +26,53 @@ class CreateTodoArgs(BaseModel):
 
 
 class DeleteTodoArgs(BaseModel):
-    plan_time: str | None = Field(
-        default=None, description="The planned date/time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
-    item: str = Field(
+    todo_id: str = Field(
         ...,
-        description="The name/title of the todo item to delete."
+        description="The UUID of the todo item to delete."
     )
+
+
+class UpdateTodoArgs(BaseModel):
+    todo_id: str = Field(...,
+                         description="The UUID of the todo item to update")
+    item: str | None = Field(
+        default=None, description="The new name/title of the todo item")
+    description: str | None = Field(
+        default=None, description="The new description/content of the todo item")
+    plan_time: str | None = Field(
+        default=None, description="The new planned date/time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
+    importance: str | None = Field(
+        default=None, description="The new importance level: none, low, medium, high")
+    timezone: str | None = Field(
+        default=None, description="Timezone for date parsing (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used.")
+
+
+class GetTodoListArgs(BaseModel):
+    limit: int = Field(
+        default=20, description="Maximum number of todos to return (default: 20)")
+    from_date: str | None = Field(
+        default=None, description="Filter todos from this date (YYYY-MM-DD)")
+    to_date: str | None = Field(
+        default=None, description="Filter todos to this date (YYYY-MM-DD)")
+    importance: str | None = Field(
+        default=None, description="Filter by importance level: none, low, medium, high")
+    timezone: str | None = Field(
+        default=None, description="Timezone for date filtering (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used.")
+
+
+class SearchTodoArgs(BaseModel):
+    query: str | None = Field(
+        default=None, description="Search term to find in todo items or descriptions")
+    importance: str | None = Field(
+        default=None, description="Filter by importance level: none, low, medium, high")
+    from_date: str | None = Field(
+        default=None, description="Filter todos from this date (YYYY-MM-DD)")
+    to_date: str | None = Field(
+        default=None, description="Filter todos to this date (YYYY-MM-DD)")
+    limit: int = Field(
+        default=10, description="Maximum number of results to return")
+    timezone: str | None = Field(
+        default=None, description="Timezone for date filtering (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used.")
 
 
 # Global variables to hold services and user context
