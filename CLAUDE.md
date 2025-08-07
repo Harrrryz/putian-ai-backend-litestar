@@ -16,9 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `make type-check` - Run type checking (pyright)
 
 ### Database
+- `uv run app database make-migrations` - Create migration
 - `uv run app database upgrade` - Run database migrations
 - `uv run app database downgrade` - Rollback database migrations
-- `uv run app database revision` - Create a new migration
 
 ### Docker
 - `make start-infra` - Start local infrastructure (PostgreSQL)
