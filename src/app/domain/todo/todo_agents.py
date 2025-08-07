@@ -104,19 +104,18 @@ async def delete_todo_impl(ctx: RunContextWrapper, args: str) -> str:
 
     # Delete the todo item
     try:
-        todos = await _todo_service.list_and_count(
-            m.Todo.user_id == _current_user_id,
-            m.Todo.item == item,
-            m.Todo.plan_time == plan_time
-        )
-        if not todos:
-            return f"Todo item {item} not found."
+        todo_uuid = UUID(todo_id)
+        todo = await _todo_service.get(todo_uuid)
+        if not todo:
+            return f"Todo item with ID {todo_id} not found."
+
+        # Verify the todo belongs to the current user
+        if todo.user_id != _current_user_id:
+            return f"Todo item with ID {todo_id} does not belong to you."
 
         await _todo_service.delete(item)
     except Exception as e:
         return f"Error deleting todo: {e!s}"
-    else:
-        return f"Successfully deleted todo {item} with plan time {plan_time}"
 
 
 async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
