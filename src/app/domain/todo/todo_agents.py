@@ -19,8 +19,8 @@ class CreateTodoArgs(BaseModel):
                       description="The name/title of the todo item to create")
     description: str | None = Field(
         default=None, description="The description/content of the todo item")
-    plan_time: str | None = Field(
-        default=None, description="The planned date/time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
+    alarm_time: str | None = Field(
+        default=None, description="The alarm time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
     tags: list[str] | None = Field(
         default=None, description="List of tag names to associate with the todo. Common tags: 'work', 'personal', 'study', 'entertainment'")
     importance: str = Field(
@@ -89,7 +89,7 @@ class UpdateTodoArgs(BaseModel):
         default=None, description="The new name/title of the todo item")
     description: str | None = Field(
         default=None, description="The new description/content of the todo item")
-    plan_time: str | None = Field(
+    alarm_time: str | None = Field(
         default=None, description="The new planned date/time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
     importance: str | None = Field(
         default=None, description="The new importance level: none, low, medium, high")
@@ -180,18 +180,18 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     # Parse the arguments
     parsed_args = CreateTodoArgs.model_validate_json(args)
 
-    # Parse plan_time if provided and convert to ISO string
-    plan_time_obj = None
-    if parsed_args.plan_time:
+    # Parse alarm_time if provided and convert to ISO string
+    alarm_time_obj = None
+    if parsed_args.alarm_time:
         try:
-            plan_time_obj = datetime.strptime(
-                parsed_args.plan_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+            alarm_time_obj = datetime.strptime(
+                parsed_args.alarm_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
         except ValueError:
             try:
-                plan_time_obj = datetime.strptime(
-                    parsed_args.plan_time, "%Y-%m-%d").replace(tzinfo=UTC)
+                alarm_time_obj = datetime.strptime(
+                    parsed_args.alarm_time, "%Y-%m-%d").replace(tzinfo=UTC)
             except ValueError:
-                return f"Error: Invalid date format '{parsed_args.plan_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+                return f"Error: Invalid date format '{parsed_args.alarm_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
 
     # Convert importance string to enum
     try:
@@ -199,7 +199,7 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     except ValueError:
         importance_enum = Importance.NONE
 
-    # Create todo data - handle None plan_time properly
+    # Create todo data - handle None alarm_time properly
     todo_data: dict[str, object] = {
         "item": parsed_args.item,
         "description": parsed_args.description,
@@ -207,9 +207,9 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
         "user_id": _current_user_id,
     }
 
-    # Only add plan_time if it was provided
-    if plan_time_obj is not None:
-        todo_data["plan_time"] = plan_time_obj
+    # Only add alarm_time if it was provided
+    if alarm_time_obj is not None:
+        todo_data["alarm_time"] = alarm_time_obj
 
     # Create the todo - simplified without tag handling for now
     try:
@@ -248,7 +248,7 @@ async def update_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     # Prepare update data
     update_data: dict[str, object] = {}
 
-    # Determine timezone to use for plan_time parsing
+    # Determine timezone to use for alarm_time parsing
     user_tz = UTC  # Default to UTC
     if parsed_args.timezone:
         try:
@@ -262,23 +262,23 @@ async def update_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     if parsed_args.description is not None:
         update_data["description"] = parsed_args.description
 
-    # Parse plan_time if provided with timezone support
-    if parsed_args.plan_time is not None:
+    # Parse alarm_time if provided with timezone support
+    if parsed_args.alarm_time is not None:
         try:
             # First try with full datetime format
-            plan_time_obj = datetime.strptime(
-                parsed_args.plan_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz)
+            alarm_time_obj = datetime.strptime(
+                parsed_args.alarm_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz)
         except ValueError:
             try:
                 # Then try with date only format (set to beginning of day)
-                plan_time_obj = datetime.strptime(
-                    parsed_args.plan_time, "%Y-%m-%d").replace(tzinfo=user_tz)
+                alarm_time_obj = datetime.strptime(
+                    parsed_args.alarm_time, "%Y-%m-%d").replace(tzinfo=user_tz)
             except ValueError:
-                return f"Error: Invalid date format '{parsed_args.plan_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+                return f"Error: Invalid date format '{parsed_args.alarm_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
 
         # Convert to UTC for database storage
-        plan_time_utc = plan_time_obj.astimezone(UTC)
-        update_data["plan_time"] = plan_time_utc
+        alarm_time_utc = alarm_time_obj.astimezone(UTC)
+        update_data["alarm_time"] = alarm_time_utc
 
     # Convert importance string to enum if provided
     if parsed_args.importance is not None:
@@ -301,9 +301,9 @@ async def update_todo_impl(ctx: RunContextWrapper, args: str) -> str:
             todo.description = update_data["description"]  # type: ignore
             updated_fields.append("description")
 
-        if "plan_time" in update_data:
-            todo.plan_time = update_data["plan_time"]  # type: ignore
-            updated_fields.append("plan_time")
+        if "alarm_time" in update_data:
+            todo.alarm_time = update_data["alarm_time"]  # type: ignore
+            updated_fields.append("alarm_time")
 
         if "importance" in update_data:
             todo.importance = update_data["importance"]  # type: ignore
@@ -338,14 +338,14 @@ async def get_todo_list_impl(ctx: RunContextWrapper, args: str) -> str:
         except Exception:
             return f"Error: Invalid timezone '{parsed_args.timezone}'. Use a valid timezone name like 'America/New_York' or 'Asia/Shanghai'"
 
-    # Date range filters for plan_time
+    # Date range filters for alarm_time
     if parsed_args.from_date:
         try:
             # Parse date in user's timezone and convert to UTC for database query
             from_date_obj = datetime.strptime(
                 parsed_args.from_date, "%Y-%m-%d").replace(tzinfo=user_tz)
             from_date_utc = from_date_obj.astimezone(UTC)
-            filters.append(m.Todo.plan_time >= from_date_utc)
+            filters.append(m.Todo.alarm_time >= from_date_utc)
         except ValueError:
             return f"Error: Invalid from_date format '{parsed_args.from_date}'. Use YYYY-MM-DD"
 
@@ -355,7 +355,7 @@ async def get_todo_list_impl(ctx: RunContextWrapper, args: str) -> str:
             to_date_obj = datetime.strptime(
                 parsed_args.to_date, "%Y-%m-%d").replace(tzinfo=user_tz, hour=23, minute=59, second=59)
             to_date_utc = to_date_obj.astimezone(UTC)
-            filters.append(m.Todo.plan_time <= to_date_utc)
+            filters.append(m.Todo.alarm_time <= to_date_utc)
         except ValueError:
             return f"Error: Invalid to_date format '{parsed_args.to_date}'. Use YYYY-MM-DD"
 
@@ -388,17 +388,17 @@ async def get_todo_list_impl(ctx: RunContextWrapper, args: str) -> str:
         # Format results
         results = []
         for todo in todos:
-            if todo.plan_time:
+            if todo.alarm_time:
                 # Convert UTC time from database to user's timezone for display
-                plan_time_in_user_tz = todo.plan_time.astimezone(user_tz)
-                plan_time_str = plan_time_in_user_tz.strftime(
+                alarm_time_in_user_tz = todo.alarm_time.astimezone(user_tz)
+                alarm_time_str = alarm_time_in_user_tz.strftime(
                     "%Y-%m-%d %H:%M:%S")
                 if user_tz != UTC:
                     # Show timezone info if not UTC
-                    plan_time_str += f" ({plan_time_in_user_tz.tzinfo})"
+                    alarm_time_str += f" ({alarm_time_in_user_tz.tzinfo})"
             else:
-                plan_time_str = "No plan time"
-            result = f"• {todo.item} (ID: {todo.id})\n  Description: {todo.description or 'No description'}\n  Plan time: {plan_time_str}\n  Importance: {todo.importance.value}"
+                alarm_time_str = "No plan time"
+            result = f"• {todo.item} (ID: {todo.id})\n  Description: {todo.description or 'No description'}\n  Plan time: {alarm_time_str}\n  Importance: {todo.importance.value}"
             results.append(result)
 
         filter_info = []
@@ -483,8 +483,8 @@ async def _get_todos_for_date_range(start_date: datetime, include_days: int) -> 
     from advanced_alchemy.filters import LimitOffset
     filters = [
         m.Todo.user_id == _current_user_id,
-        m.Todo.plan_time >= start_utc,
-        m.Todo.plan_time <= end_utc
+        m.Todo.alarm_time >= start_utc,
+        m.Todo.alarm_time <= end_utc
     ]
     if not _todo_service:
         raise RuntimeError("Todo service not initialized")
@@ -512,8 +512,8 @@ def _analyze_single_day(todos: Sequence[Todo], current_date: datetime, user_tz: 
     # Get todos for this day
 
     day_todos = [todo for todo in todos if day_start_utc <=
-                 todo.plan_time <= day_end_utc]  # type: ignore
-    day_todos.sort(key=lambda x: x.plan_time)  # type: ignore
+                 todo.alarm_time <= day_end_utc]  # type: ignore
+    day_todos.sort(key=lambda x: x.alarm_time)  # type: ignore
     # Find free time slots
     free_slots = _find_free_time_slots(day_todos, current_date, user_tz)
 
@@ -524,9 +524,9 @@ def _analyze_single_day(todos: Sequence[Todo], current_date: datetime, user_tz: 
     if day_todos:
         day_analysis += "  Scheduled todos:\n"
         for todo in day_todos:
-            if todo.plan_time:
+            if todo.alarm_time:
                 # Convert UTC time from database to user's timezone for display
-                todo_time_local = todo.plan_time.astimezone(user_tz)
+                todo_time_local = todo.alarm_time.astimezone(user_tz)
                 day_analysis += f"    • {todo_time_local.strftime('%H:%M')} - {todo.item} (importance: {todo.importance.value})\n"
     else:
         day_analysis += "  No scheduled todos\n"
@@ -554,7 +554,7 @@ def _find_free_time_slots(day_todos: list, current_date: datetime, user_tz: Zone
     # Check for gaps between todos
     current_time = work_start
     for todo in day_todos:
-        todo_time_local = todo.plan_time.astimezone(user_tz)
+        todo_time_local = todo.alarm_time.astimezone(user_tz)
         if current_time < todo_time_local:
             gap_hours = (todo_time_local - current_time).total_seconds() / 3600
             if gap_hours >= 0.5:  # At least 30 minutes
@@ -646,16 +646,16 @@ async def _get_existing_todos_for_day(target_date: datetime, user_tz: ZoneInfo) 
     from advanced_alchemy.filters import LimitOffset
     filters = [
         m.Todo.user_id == _current_user_id,
-        m.Todo.plan_time >= day_start_utc,
-        m.Todo.plan_time <= day_end_utc
+        m.Todo.alarm_time >= day_start_utc,
+        m.Todo.alarm_time <= day_end_utc
     ]
     if not _todo_service:
         raise RuntimeError("Todo service not initialized")
     existing_todos, _ = await _todo_service.list_and_count(*filters, LimitOffset(limit=50, offset=0))
     existing_todos = [
-        todo for todo in existing_todos if todo.plan_time is not None]
+        todo for todo in existing_todos if todo.alarm_time is not None]
     # Convert todos to user's timezone for scheduling
-    existing_todos.sort(key=lambda x: x.plan_time)  # type: ignore
+    existing_todos.sort(key=lambda x: x.alarm_time)  # type: ignore
     return existing_todos
 
 
@@ -712,7 +712,7 @@ async def _create_scheduled_todo(parsed_args: ScheduleTodoArgs, suggested_time: 
         "description": parsed_args.description,
         "importance": importance_enum,
         "user_id": _current_user_id,
-        "plan_time": suggested_time.astimezone(UTC)
+        "alarm_time": suggested_time.astimezone(UTC)
     }
     if not _todo_service:
         raise RuntimeError("Todo service not initialized")
@@ -736,7 +736,7 @@ def _find_free_slot(target_date: datetime, start_hour: int, end_hour: int, durat
 
     current_time = slot_start
     for todo in existing_todos:
-        todo_time_local = todo.plan_time.astimezone(user_tz)
+        todo_time_local = todo.alarm_time.astimezone(user_tz)
 
         # Check if there's enough space before this todo
         if current_time + duration_delta <= todo_time_local:
@@ -757,7 +757,7 @@ def _detect_scheduling_conflicts(target_date: datetime, duration_minutes: int, e
     """Detect potential scheduling conflicts."""
     conflicts = []
     for todo in existing_todos:
-        todo_time_local = todo.plan_time.astimezone(user_tz)
+        todo_time_local = todo.alarm_time.astimezone(user_tz)
         conflicts.append({
             "time": todo_time_local.strftime("%H:%M"),
             "item": todo.item,
@@ -839,7 +839,7 @@ async def _apply_schedule_updates(updates: list, user_tz: ZoneInfo) -> tuple[lis
                 continue
 
             # Update the todo
-            todo.plan_time = new_time_utc
+            todo.alarm_time = new_time_utc
             await _todo_service.update(todo)
 
             successful_updates.append(
@@ -922,8 +922,8 @@ TODO_SYSTEM_INSTRUCTIONS = f"""You are a helpful todo list assistant with intell
 When creating todos:
 - Extract the main task as the 'item' (title)
 - Use any additional details as 'description'
-- Parse dates/times if mentioned for 'plan_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
-- If auto_schedule is true and no plan_time is specified, use the schedule_todo tool to find optimal time slots
+- Parse dates/times if mentioned for 'alarm_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
+- If auto_schedule is true and no alarm_time is specified, use the schedule_todo tool to find optimal time slots
 - Assign appropriate importance: none (default), low, medium, high
 - Suggest relevant tags like: 'work', 'personal', 'study', 'shopping', 'health', 'entertainment'
 - Support timezone parameter for proper date parsing (e.g., 'America/New_York', 'Asia/Shanghai')
@@ -939,7 +939,7 @@ When deleting todos:
 When updating todos:
 - Require the todo ID (UUID) to identify which todo to update
 - Only update the fields that the user wants to change
-- Parse dates/times if mentioned for 'plan_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
+- Parse dates/times if mentioned for 'alarm_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
 - Support timezone parameter for proper date parsing (e.g., 'America/New_York', 'Asia/Shanghai')
 - If no timezone is specified, UTC is used for date parsing
 - Validate importance levels: none, low, medium, high
