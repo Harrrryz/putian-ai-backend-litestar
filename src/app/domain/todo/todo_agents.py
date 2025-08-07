@@ -1,6 +1,7 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from typing import Sequence
 from uuid import UUID
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, RunContextWrapper
 from openai import AsyncOpenAI
@@ -9,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.config.base import get_settings
 from app.db import models as m
 from app.db.models.importance import Importance
+from app.db.models.todo import Todo
 from app.domain.todo.services import TagService, TodoService
 
 
@@ -23,6 +25,54 @@ class CreateTodoArgs(BaseModel):
         default=None, description="List of tag names to associate with the todo. Common tags: 'work', 'personal', 'study', 'entertainment'")
     importance: str = Field(
         default="none", description="The importance level: none, low, medium, high")
+    timezone: str | None = Field(
+        default=None, description="Timezone for date parsing (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used.")
+    auto_schedule: bool = Field(
+        default=False, description="Whether to automatically schedule this todo if no specific time is provided")
+
+
+class ScheduleTodoArgs(BaseModel):
+    item: str = Field(...,
+                      description="The name/title of the todo item to schedule")
+    description: str | None = Field(
+        default=None, description="The description/content of the todo item")
+    target_date: str | None = Field(
+        default=None, description="The target date for scheduling (YYYY-MM-DD). If not provided, defaults to today or tomorrow")
+    duration_minutes: int = Field(
+        default=60, description="Estimated duration of the task in minutes (default: 60)")
+    importance: str = Field(
+        default="none", description="The importance level: none, low, medium, high")
+    timezone: str | None = Field(
+        default=None, description="Timezone for date parsing (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used.")
+    preferred_time_of_day: str | None = Field(
+        default=None, description="Preferred time of day: 'morning' (8-12), 'afternoon' (12-17), 'evening' (17-21), or specific time range")
+    tags: list[str] | None = Field(
+        default=None, description="List of tag names to associate with the todo")
+
+
+class AnalyzeScheduleArgs(BaseModel):
+    target_date: str | None = Field(
+        default=None, description="The date to analyze (YYYY-MM-DD). If not provided, analyzes today and tomorrow")
+    timezone: str | None = Field(
+        default=None, description="Timezone for date analysis (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used.")
+    include_days: int = Field(
+        default=3, description="Number of days to analyze starting from target_date (default: 3)")
+
+
+class ScheduleConflictResolution(BaseModel):
+    todo_id: str = Field(..., description="The UUID of the todo to reschedule")
+    new_time: str = Field(...,
+                          description="New time in format YYYY-MM-DD HH:MM:SS")
+    reason: str = Field(..., description="Reason for the time change")
+
+
+class BatchUpdateScheduleArgs(BaseModel):
+    updates: list[ScheduleConflictResolution] = Field(
+        ..., description="List of schedule updates to apply")
+    timezone: str | None = Field(
+        default=None, description="Timezone for date parsing")
+    confirm: bool = Field(
+        default=False, description="Set to true to confirm and apply the changes")
 
 
 class DeleteTodoArgs(BaseModel):
@@ -370,6 +420,452 @@ async def get_todo_list_impl(ctx: RunContextWrapper, args: str) -> str:
         return f"Error getting todo list: {e!s}"
 
 
+async def analyze_schedule_impl(ctx: RunContextWrapper, args: str) -> str:
+    """Analyze the user's schedule to identify free time slots and conflicts."""
+    if not _todo_service or not _current_user_id:
+        return "Error: Agent context not properly initialized"
+
+    try:
+        parsed_args = AnalyzeScheduleArgs.model_validate_json(args)
+    except ValueError as e:
+        return f"Error: Invalid arguments '{args}': {e}"
+
+    try:
+        user_tz, start_date = _parse_timezone_and_date(
+            parsed_args.timezone, parsed_args.target_date)
+        todos = await _get_todos_for_date_range(start_date, parsed_args.include_days)
+        schedule_analysis = _analyze_schedule_by_days(
+            todos, start_date, parsed_args.include_days, user_tz)
+
+        result = f"📊 Schedule Analysis ({parsed_args.include_days} days starting from {start_date.strftime('%Y-%m-%d')}):\n\n"
+        result += "\n\n".join(schedule_analysis)
+
+        if parsed_args.timezone and user_tz != UTC:
+            result += f"\n\n🌍 Times shown in {parsed_args.timezone} timezone"
+
+        return result
+    except (ValueError, ZoneInfoNotFoundError) as e:
+        return f"Error: {e!s}"
+    except Exception as e:
+        return f"Error analyzing schedule: {e!s}"
+
+
+def _parse_timezone_and_date(timezone_str: str | None, target_date_str: str | None) -> tuple[ZoneInfo, datetime]:
+    """Parse timezone and target date from input arguments."""
+    user_tz = ZoneInfo("UTC")
+    if timezone_str:
+        try:
+            user_tz = ZoneInfo(timezone_str)
+        except ZoneInfoNotFoundError as e:
+            msg = f"Invalid timezone '{timezone_str}'"
+            raise ValueError(msg) from e
+
+    if target_date_str:
+        try:
+            start_date = datetime.strptime(
+                target_date_str, "%Y-%m-%d").replace(tzinfo=user_tz)
+        except ValueError as e:
+            msg = f"Invalid target_date format '{target_date_str}'. Use YYYY-MM-DD"
+            raise ValueError(msg) from e
+    else:
+        start_date = datetime.now(user_tz).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+
+    return user_tz, start_date
+
+
+async def _get_todos_for_date_range(start_date: datetime, include_days: int) -> Sequence[Todo]:
+    """Get todos for the specified date range."""
+    end_date = start_date + timedelta(days=include_days)
+    start_utc = start_date.astimezone(UTC)
+    end_utc = end_date.astimezone(UTC)
+
+    from advanced_alchemy.filters import LimitOffset
+    filters = [
+        m.Todo.user_id == _current_user_id,
+        m.Todo.plan_time >= start_utc,
+        m.Todo.plan_time <= end_utc
+    ]
+    if not _todo_service:
+        raise RuntimeError("Todo service not initialized")
+    todos, _ = await _todo_service.list_and_count(*filters, LimitOffset(limit=100, offset=0))
+    return todos
+
+
+def _analyze_schedule_by_days(todos: Sequence[Todo], start_date: datetime, include_days: int, user_tz: ZoneInfo) -> list[str]:
+    """Analyze schedule day by day and return analysis for each day."""
+    schedule_analysis = []
+    for day_offset in range(include_days):
+        current_date = start_date + timedelta(days=day_offset)
+        day_analysis = _analyze_single_day(todos, current_date, user_tz)
+        schedule_analysis.append(day_analysis)
+    return schedule_analysis
+
+
+def _analyze_single_day(todos: Sequence[Todo], current_date: datetime, user_tz: ZoneInfo) -> str:
+    """Analyze a single day's schedule."""
+    day_start = current_date.replace(hour=0, minute=0, second=0)
+    day_end = current_date.replace(hour=23, minute=59, second=59)
+    day_start_utc = day_start.astimezone(UTC)
+    day_end_utc = day_end.astimezone(UTC)
+
+    # Get todos for this day
+
+    day_todos = [todo for todo in todos if day_start_utc <=
+                 todo.plan_time <= day_end_utc]  # type: ignore
+    day_todos.sort(key=lambda x: x.plan_time)  # type: ignore
+    # Find free time slots
+    free_slots = _find_free_time_slots(day_todos, current_date, user_tz)
+
+    # Format day analysis
+    day_str = current_date.strftime("%A, %B %d, %Y")
+    day_analysis = f"📅 {day_str}:\n"
+
+    if day_todos:
+        day_analysis += "  Scheduled todos:\n"
+        for todo in day_todos:
+            if todo.plan_time:
+                # Convert UTC time from database to user's timezone for display
+                todo_time_local = todo.plan_time.astimezone(user_tz)
+                day_analysis += f"    • {todo_time_local.strftime('%H:%M')} - {todo.item} (importance: {todo.importance.value})\n"
+    else:
+        day_analysis += "  No scheduled todos\n"
+
+    if free_slots:
+        day_analysis += "  Available time slots:\n" + "\n".join(free_slots)
+    else:
+        day_analysis += "  ⚠️  No significant free time slots available"
+
+    return day_analysis
+
+
+def _find_free_time_slots(day_todos: list, current_date: datetime, user_tz: ZoneInfo) -> list[str]:
+    """Find free time slots in a day."""
+    work_start = current_date.replace(hour=8, minute=0)
+    work_end = current_date.replace(hour=22, minute=0)
+
+    free_slots = []
+    if not day_todos:
+        # Entire day is free
+        free_slots.append(
+            f"  🟢 {work_start.strftime('%H:%M')} - {work_end.strftime('%H:%M')} (14 hours available)")
+        return free_slots
+
+    # Check for gaps between todos
+    current_time = work_start
+    for todo in day_todos:
+        todo_time_local = todo.plan_time.astimezone(user_tz)
+        if current_time < todo_time_local:
+            gap_hours = (todo_time_local - current_time).total_seconds() / 3600
+            if gap_hours >= 0.5:  # At least 30 minutes
+                free_slots.append(
+                    f"  🟢 {current_time.strftime('%H:%M')} - {todo_time_local.strftime('%H:%M')} ({gap_hours:.1f} hours available)")
+
+        # Assume each todo takes 1 hour if not specified
+        current_time = max(current_time, todo_time_local +
+                           timedelta(hours=1))
+
+    # Check for time after last todo
+    if current_time < work_end:
+        gap_hours = (work_end - current_time).total_seconds() / 3600
+        if gap_hours >= 0.5:
+            free_slots.append(
+                f"  🟢 {current_time.strftime('%H:%M')} - {work_end.strftime('%H:%M')} ({gap_hours:.1f} hours available)")
+
+    return free_slots
+
+
+async def schedule_todo_impl(ctx: RunContextWrapper, args: str) -> str:
+    """Intelligently schedule a todo by finding optimal time slots."""
+    if not _todo_service or not _tag_service or not _current_user_id:
+        return "Error: Agent context not properly initialized"
+
+    try:
+        parsed_args = ScheduleTodoArgs.model_validate_json(args)
+    except ValueError as e:
+        return f"Error: Invalid arguments '{args}': {e}"
+
+    try:
+        user_tz, target_date = _determine_schedule_target_date(
+            parsed_args.timezone, parsed_args.target_date)
+        existing_todos = await _get_existing_todos_for_day(target_date, user_tz)
+
+        suggested_time = _find_optimal_time_slot(
+            target_date, parsed_args, existing_todos, user_tz)
+
+        if not suggested_time:
+            return _handle_no_available_slot(target_date, parsed_args, existing_todos, user_tz)
+
+        todo = await _create_scheduled_todo(parsed_args, suggested_time)
+        return _format_scheduling_success(todo, suggested_time, user_tz)
+
+    except (ValueError, ZoneInfoNotFoundError) as e:
+        return f"Error: {e!s}"
+    except Exception as e:
+        return f"Error scheduling todo: {e!s}"
+
+
+def _determine_schedule_target_date(timezone_str: str | None, target_date_str: str | None) -> tuple[ZoneInfo, datetime]:
+    """Determine the target date and timezone for scheduling."""
+    user_tz = ZoneInfo("UTC")
+    if timezone_str:
+        try:
+            user_tz = ZoneInfo(timezone_str)
+        except ZoneInfoNotFoundError as e:
+            msg = f"Invalid timezone '{timezone_str}'"
+            raise ValueError(msg) from e
+
+    if target_date_str:
+        try:
+            target_date = datetime.strptime(
+                target_date_str, "%Y-%m-%d").replace(tzinfo=user_tz)
+        except ValueError as e:
+            msg = f"Invalid target_date format '{target_date_str}'. Use YYYY-MM-DD"
+            raise ValueError(msg) from e
+        return user_tz, target_date
+
+    # Default to tomorrow if current time is after 6 PM, otherwise today
+    now = datetime.now(user_tz)
+    if now.hour >= 18:
+        from datetime import timedelta
+        target_date = now.replace(
+            hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    else:
+        target_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    return user_tz, target_date
+
+
+async def _get_existing_todos_for_day(target_date: datetime, user_tz: ZoneInfo) -> list:
+    """Get existing todos for the target date."""
+    day_start = target_date.replace(hour=0, minute=0, second=0)
+    day_end = target_date.replace(hour=23, minute=59, second=59)
+    day_start_utc = day_start.astimezone(UTC)
+    day_end_utc = day_end.astimezone(UTC)
+
+    from advanced_alchemy.filters import LimitOffset
+    filters = [
+        m.Todo.user_id == _current_user_id,
+        m.Todo.plan_time >= day_start_utc,
+        m.Todo.plan_time <= day_end_utc
+    ]
+    if not _todo_service:
+        raise RuntimeError("Todo service not initialized")
+    existing_todos, _ = await _todo_service.list_and_count(*filters, LimitOffset(limit=50, offset=0))
+    existing_todos = [
+        todo for todo in existing_todos if todo.plan_time is not None]
+    # Convert todos to user's timezone for scheduling
+    existing_todos.sort(key=lambda x: x.plan_time)  # type: ignore
+    return existing_todos
+
+
+def _find_optimal_time_slot(target_date: datetime, parsed_args: ScheduleTodoArgs, existing_todos: list, user_tz: ZoneInfo) -> datetime | None:
+    """Find the optimal time slot for scheduling the todo."""
+    time_preferences = {
+        "morning": (8, 12),   # 8 AM - 12 PM
+        "afternoon": (12, 17),  # 12 PM - 5 PM
+        "evening": (17, 21)    # 5 PM - 9 PM
+    }
+
+    # Try preferred time of day first
+    if parsed_args.preferred_time_of_day and parsed_args.preferred_time_of_day.lower() in time_preferences:
+        start_hour, end_hour = time_preferences[parsed_args.preferred_time_of_day.lower(
+        )]
+        suggested_time = _find_free_slot(
+            target_date, start_hour, end_hour, parsed_args.duration_minutes, existing_todos, user_tz)
+        if suggested_time:
+            return suggested_time
+
+    # Try all time slots in order of preference
+    for period in ["morning", "afternoon", "evening"]:
+        start_hour, end_hour = time_preferences[period]
+        suggested_time = _find_free_slot(
+            target_date, start_hour, end_hour, parsed_args.duration_minutes, existing_todos, user_tz)
+        if suggested_time:
+            return suggested_time
+
+    return None
+
+
+def _handle_no_available_slot(target_date: datetime, parsed_args: ScheduleTodoArgs, existing_todos: list, user_tz: ZoneInfo) -> str:
+    """Handle the case when no time slot is available."""
+    conflicts = _detect_scheduling_conflicts(
+        target_date, parsed_args.duration_minutes, existing_todos, user_tz)
+    if conflicts:
+        conflict_info = "\n".join(
+            [f"  • {c['time']} - {c['item']} (importance: {c['importance']})" for c in conflicts])
+        return f"⚠️ No free time slots found for '{parsed_args.item}' on {target_date.strftime('%Y-%m-%d')}.\n\nExisting todos that might conflict:\n{conflict_info}\n\nWould you like me to suggest rescheduling some todos to make room?"
+    else:
+        return f"⚠️ No suitable time slots found for '{parsed_args.item}' on {target_date.strftime('%Y-%m-%d')}. The day appears to be fully booked."
+
+
+async def _create_scheduled_todo(parsed_args: ScheduleTodoArgs, suggested_time: datetime) -> Todo:
+    """Create a new todo with the suggested time."""
+    importance_enum = Importance.NONE
+    try:
+        importance_enum = Importance(parsed_args.importance.lower())
+    except ValueError:
+        pass
+
+    todo_data = {
+        "item": parsed_args.item,
+        "description": parsed_args.description,
+        "importance": importance_enum,
+        "user_id": _current_user_id,
+        "plan_time": suggested_time.astimezone(UTC)
+    }
+    if not _todo_service:
+        raise RuntimeError("Todo service not initialized")
+    return await _todo_service.create(todo_data)
+
+
+def _format_scheduling_success(todo: Todo, suggested_time: datetime, user_tz: ZoneInfo) -> str:
+    """Format the success message for scheduling."""
+    suggested_time_str = suggested_time.strftime("%Y-%m-%d %H:%M:%S")
+    if user_tz != UTC:
+        suggested_time_str += f" ({user_tz})"
+
+    return f"✅ Successfully scheduled '{todo.item}' for {suggested_time_str}\n\nThis time slot was chosen based on your existing schedule and preferences."
+
+
+def _find_free_slot(target_date: datetime, start_hour: int, end_hour: int, duration_minutes: int, existing_todos: list, user_tz: ZoneInfo) -> datetime | None:
+    """Find a free time slot within the specified time range."""
+    slot_start = target_date.replace(hour=start_hour, minute=0)
+    slot_end = target_date.replace(hour=end_hour, minute=0)
+    duration_delta = timedelta(minutes=duration_minutes)
+
+    current_time = slot_start
+    for todo in existing_todos:
+        todo_time_local = todo.plan_time.astimezone(user_tz)
+
+        # Check if there's enough space before this todo
+        if current_time + duration_delta <= todo_time_local:
+            return current_time
+
+        # Move current time to after this todo (assuming 1 hour duration)
+        current_time = max(current_time, todo_time_local +
+                           timedelta(hours=1))
+
+    # Check if there's space after the last todo
+    if current_time + duration_delta <= slot_end:
+        return current_time
+
+    return None
+
+
+def _detect_scheduling_conflicts(target_date: datetime, duration_minutes: int, existing_todos: list, user_tz: ZoneInfo) -> list:
+    """Detect potential scheduling conflicts."""
+    conflicts = []
+    for todo in existing_todos:
+        todo_time_local = todo.plan_time.astimezone(user_tz)
+        conflicts.append({
+            "time": todo_time_local.strftime("%H:%M"),
+            "item": todo.item,
+            "importance": todo.importance.value
+        })
+    return conflicts
+
+
+async def batch_update_schedule_impl(ctx: RunContextWrapper, args: str) -> str:
+    """Apply batch schedule updates after user confirmation."""
+    if not _todo_service or not _current_user_id:
+        return "Error: Agent context not properly initialized"
+
+    try:
+        parsed_args = BatchUpdateScheduleArgs.model_validate_json(args)
+    except ValueError as e:
+        return f"Error: Invalid arguments '{args}': {e}"
+
+    if not parsed_args.confirm:
+        return _generate_update_preview(parsed_args)
+
+    user_tz = _get_user_timezone(parsed_args.timezone)
+    if isinstance(user_tz, str):  # Error message
+        return user_tz
+
+    successful_updates, failed_updates = await _apply_schedule_updates(parsed_args.updates, user_tz)
+    return _format_update_results(successful_updates, failed_updates)
+
+
+def _generate_update_preview(parsed_args: BatchUpdateScheduleArgs) -> str:
+    """Generate a preview of proposed schedule changes."""
+    preview = "📋 Proposed Schedule Changes:\n\n"
+    for i, update in enumerate(parsed_args.updates, 1):
+        preview += f"{i}. Todo ID ending in ...{update.todo_id[-8:]}:\n"
+        preview += f"   New time: {update.new_time}\n"
+        preview += f"   Reason: {update.reason}\n\n"
+
+    preview += "⚠️  To confirm these changes, set 'confirm: true' in your request."
+    return preview
+
+
+def _get_user_timezone(timezone_str: str | None) -> ZoneInfo | str:
+    """Get user timezone or return error message."""
+    user_tz = ZoneInfo("UTC")
+    if timezone_str:
+        try:
+            user_tz = ZoneInfo(timezone_str)
+        except ZoneInfoNotFoundError:
+            return f"Error: Invalid timezone '{timezone_str}'"
+    return user_tz
+
+
+async def _apply_schedule_updates(updates: list, user_tz: ZoneInfo) -> tuple[list[str], list[str]]:
+    """Apply the schedule updates and return results."""
+    successful_updates = []
+    failed_updates = []
+
+    for update in updates:
+        try:
+            todo_uuid = UUID(update.todo_id)
+            if not _todo_service:
+                raise RuntimeError("Todo service not initialized")
+            if not _current_user_id:
+                raise RuntimeError("Current user ID not set")
+            todo = await _todo_service.get_todo_by_id(todo_uuid, _current_user_id)
+
+            if not todo:
+                failed_updates.append(f"Todo {update.todo_id} not found")
+                continue
+
+            # Parse new time
+            try:
+                new_time_obj = datetime.strptime(
+                    update.new_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz)
+                new_time_utc = new_time_obj.astimezone(UTC)
+            except ValueError:
+                failed_updates.append(
+                    f"Invalid time format for todo {update.todo_id}: {update.new_time}")
+                continue
+
+            # Update the todo
+            todo.plan_time = new_time_utc
+            await _todo_service.update(todo)
+
+            successful_updates.append(
+                f"✅ '{todo.item}' rescheduled to {update.new_time}")
+
+        except Exception as e:
+            failed_updates.append(
+                f"Error updating todo {update.todo_id}: {e!s}")
+
+    return successful_updates, failed_updates
+
+
+def _format_update_results(successful_updates: list[str], failed_updates: list[str]) -> str:
+    """Format the batch update results."""
+    result = "📅 Schedule Update Results:\n\n"
+
+    if successful_updates:
+        result += "Successful updates:\n" + \
+            "\n".join(successful_updates) + "\n\n"
+
+    if failed_updates:
+        result += "Failed updates:\n" + "\n".join(failed_updates)
+
+    return result
+
+
 # Create the function tool manually with proper schema
 create_todo_tool = FunctionTool(
     name="create_todo",
@@ -399,15 +895,38 @@ get_todo_list_tool = FunctionTool(
     on_invoke_tool=get_todo_list_impl,
 )
 
+analyze_schedule_tool = FunctionTool(
+    name="analyze_schedule",
+    description="Analyze the user's schedule to identify free time slots and potential conflicts.",
+    params_json_schema=AnalyzeScheduleArgs.model_json_schema(),
+    on_invoke_tool=analyze_schedule_impl,
+)
 
-TODO_SYSTEM_INSTRUCTIONS = f"""You are a helpful todo list assistant. You can create, delete, update, and search todo items based on user input.
+schedule_todo_tool = FunctionTool(
+    name="schedule_todo",
+    description="Intelligently schedule a todo by finding optimal time slots based on existing schedule.",
+    params_json_schema=ScheduleTodoArgs.model_json_schema(),
+    on_invoke_tool=schedule_todo_impl,
+)
+
+batch_update_schedule_tool = FunctionTool(
+    name="batch_update_schedule",
+    description="Apply batch schedule updates after user confirmation to resolve conflicts and optimize timing.",
+    params_json_schema=BatchUpdateScheduleArgs.model_json_schema(),
+    on_invoke_tool=batch_update_schedule_impl,
+)
+
+
+TODO_SYSTEM_INSTRUCTIONS = f"""You are a helpful todo list assistant with intelligent scheduling capabilities. You can create, delete, update, search todo items, and automatically schedule them based on the user's existing calendar.
 
 When creating todos:
 - Extract the main task as the 'item' (title)
 - Use any additional details as 'description'
 - Parse dates/times if mentioned for 'plan_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
+- If auto_schedule is true and no plan_time is specified, use the schedule_todo tool to find optimal time slots
 - Assign appropriate importance: none (default), low, medium, high
 - Suggest relevant tags like: 'work', 'personal', 'study', 'shopping', 'health', 'entertainment'
+- Support timezone parameter for proper date parsing (e.g., 'America/New_York', 'Asia/Shanghai')
 - Do not return the ID of the user and todo items.
 
 When deleting todos:
@@ -448,6 +967,35 @@ When searching todos:
 - Display results with, title, description, plan time, and importance
 - Do not return the ID of the user and todo items.
 
+Intelligent Scheduling Capabilities:
+- Use analyze_schedule tool to show the user their schedule and identify free time slots
+- Use schedule_todo tool when the user wants to create a todo without specifying exact time
+- Prefer user's time preferences (morning, afternoon, evening) when scheduling
+- Consider estimated duration when finding time slots
+- Use batch_update_schedule tool when rescheduling multiple todos to resolve conflicts
+- Always show proposed changes before applying batch updates (confirm: false first)
+- Apply timezone awareness throughout all scheduling operations
+
+Schedule Analysis:
+- Analyze schedules for specific date ranges (default: 3 days starting today)
+- Show existing todos with their times and importance levels
+- Identify free time slots between 8 AM and 10 PM (working hours)
+- Highlight conflicts and suggest optimal scheduling times
+- Support different timezones for international users
+
+Auto-Scheduling Logic:
+- When creating todos without specific times, automatically find optimal slots
+- Consider user preferences for time of day (morning/afternoon/evening)
+- Estimate task duration (default: 60 minutes) and find adequate time slots
+- Avoid scheduling conflicts with existing todos
+- Suggest rescheduling existing todos if no free slots are available
+
+Conflict Resolution:
+- Detect scheduling conflicts when adding new todos
+- Propose solutions such as rescheduling lower-priority items
+- Use batch update operations to efficiently resolve multiple conflicts
+- Always require user confirmation before making schedule changes
+
 If the user's input is unclear, ask for clarification. Always be helpful and ensure a smooth user experience. When you return the results, do not include any sensitive information or personal data, and do not return the UUID of the user and todo items.
 
 Today's date is {datetime.now(tz=UTC).strftime('%Y-%m-%d')}."""
@@ -469,6 +1017,6 @@ def get_todo_agent() -> Agent:
         name="TodoAssistant",
         instructions=TODO_SYSTEM_INSTRUCTIONS,
         model=model,
-        tools=[create_todo_tool, delete_todo_tool,
-               update_todo_tool, get_todo_list_tool]
+        tools=[create_todo_tool, delete_todo_tool, update_todo_tool, get_todo_list_tool,
+               analyze_schedule_tool, schedule_todo_tool, batch_update_schedule_tool]
     )
