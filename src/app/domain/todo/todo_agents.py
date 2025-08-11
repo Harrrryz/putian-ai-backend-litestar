@@ -21,6 +21,10 @@ class CreateTodoArgs(BaseModel):
         default=None, description="The description/content of the todo item")
     alarm_time: str | None = Field(
         default=None, description="The alarm time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
+    start_time: str = Field(...,
+                            description="The start time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD")
+    end_time: str = Field(...,
+                          description="The end time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD")
     tags: list[str] | None = Field(
         default=None, description="List of tag names to associate with the todo. Common tags: 'work', 'personal', 'study', 'entertainment'")
     importance: str = Field(
@@ -91,6 +95,10 @@ class UpdateTodoArgs(BaseModel):
         default=None, description="The new description/content of the todo item")
     alarm_time: str | None = Field(
         default=None, description="The new planned date/time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified")
+    start_time: str | None = Field(
+        default=None, description="The new start time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD")
+    end_time: str | None = Field(
+        default=None, description="The new end time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD")
     importance: str | None = Field(
         default=None, description="The new importance level: none, low, medium, high")
     timezone: str | None = Field(
@@ -180,18 +188,67 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     # Parse the arguments
     parsed_args = CreateTodoArgs.model_validate_json(args)
 
-    # Parse alarm_time if provided and convert to ISO string
+    # Determine timezone to use
+    user_tz = ZoneInfo(parsed_args.timezone) if parsed_args.timezone else UTC
+
+    # Parse alarm_time if provided and convert to UTC
     alarm_time_obj = None
     if parsed_args.alarm_time:
         try:
             alarm_time_obj = datetime.strptime(
-                parsed_args.alarm_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC)
+                parsed_args.alarm_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz).astimezone(UTC)
         except ValueError:
             try:
                 alarm_time_obj = datetime.strptime(
-                    parsed_args.alarm_time, "%Y-%m-%d").replace(tzinfo=UTC)
+                    parsed_args.alarm_time, "%Y-%m-%d").replace(tzinfo=user_tz).astimezone(UTC)
             except ValueError:
-                return f"Error: Invalid date format '{parsed_args.alarm_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+                return f"Error: Invalid alarm time format '{parsed_args.alarm_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+
+    # Parse start_time (required) and convert to UTC
+    try:
+        start_time_obj = datetime.strptime(
+            parsed_args.start_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz).astimezone(UTC)
+    except ValueError:
+        try:
+            start_time_obj = datetime.strptime(
+                parsed_args.start_time, "%Y-%m-%d").replace(tzinfo=user_tz).astimezone(UTC)
+        except ValueError:
+            return f"Error: Invalid start time format '{parsed_args.start_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+
+    # Parse end_time (required) and convert to UTC
+    try:
+        end_time_obj = datetime.strptime(
+            parsed_args.end_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz).astimezone(UTC)
+    except ValueError:
+        try:
+            end_time_obj = datetime.strptime(
+                parsed_args.end_time, "%Y-%m-%d").replace(tzinfo=user_tz).astimezone(UTC)
+        except ValueError:
+            return f"Error: Invalid end time format '{parsed_args.end_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+
+    # Validate that end_time is after start_time
+    if end_time_obj <= start_time_obj:
+        return "Error: End time must be after start time"
+
+    # Check for time conflicts with existing todos
+    try:
+        conflicts = await _todo_service.check_time_conflict(
+            _current_user_id, start_time_obj, end_time_obj
+        )
+        if conflicts:
+            conflict_details = []
+            for conflict in conflicts:
+                conflict_start = conflict.start_time.astimezone(
+                    user_tz).strftime("%Y-%m-%d %H:%M")
+                conflict_end = conflict.end_time.astimezone(
+                    user_tz).strftime("%Y-%m-%d %H:%M")
+                conflict_details.append(
+                    f"• '{conflict.item}' ({conflict_start} - {conflict_end})")
+
+            conflict_list = "\n".join(conflict_details)
+            return f"❌ Time conflict detected! The requested time slot conflicts with existing todos:\n{conflict_list}\n\nPlease choose a different time or use the schedule_todo tool to find an available slot."
+    except Exception as e:
+        return f"Error checking for time conflicts: {e!s}"
 
     # Convert importance string to enum
     try:
@@ -199,11 +256,13 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     except ValueError:
         importance_enum = Importance.NONE
 
-    # Create todo data - handle None alarm_time properly
+    # Create todo data
     todo_data: dict[str, object] = {
         "item": parsed_args.item,
         "description": parsed_args.description,
         "importance": importance_enum,
+        "start_time": start_time_obj,
+        "end_time": end_time_obj,
         "user_id": _current_user_id,
     }
 
@@ -211,16 +270,19 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     if alarm_time_obj is not None:
         todo_data["alarm_time"] = alarm_time_obj
 
-    # Create the todo - simplified without tag handling for now
+    # Create the todo
     try:
         print(todo_data)
         todo = await _todo_service.create(todo_data)
     except Exception as e:
         return f"Error creating todo: {e!s}"
     else:
-        # Return simple success message
+        # Return success message with time info
         tag_info = f" (tags: {', '.join(parsed_args.tags)})" if parsed_args.tags else ""
-        return f"Successfully created todo '{todo.item}' (ID: {todo.id}){tag_info}"
+        start_str = start_time_obj.astimezone(
+            user_tz).strftime("%Y-%m-%d %H:%M")
+        end_str = end_time_obj.astimezone(user_tz).strftime("%Y-%m-%d %H:%M")
+        return f"Successfully created todo '{todo.item}' (ID: {todo.id}) scheduled from {start_str} to {end_str}{tag_info}"
 
 
 async def update_todo_impl(ctx: RunContextWrapper, args: str) -> str:
@@ -288,6 +350,83 @@ async def update_todo_impl(ctx: RunContextWrapper, args: str) -> str:
         except ValueError:
             return f"Error: Invalid importance level '{parsed_args.importance}'. Use: none, low, medium, high"
 
+    # Parse start_time if provided with timezone support
+    if parsed_args.start_time is not None:
+        try:
+            # First try with full datetime format
+            start_time_obj = datetime.strptime(
+                parsed_args.start_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz)
+        except ValueError:
+            try:
+                # Then try with date only format (set to beginning of day)
+                start_time_obj = datetime.strptime(
+                    parsed_args.start_time, "%Y-%m-%d").replace(tzinfo=user_tz)
+            except ValueError:
+                return f"Error: Invalid start time format '{parsed_args.start_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+
+        # Convert to UTC for database storage
+        start_time_utc = start_time_obj.astimezone(UTC)
+        update_data["start_time"] = start_time_utc
+
+    # Parse end_time if provided with timezone support
+    if parsed_args.end_time is not None:
+        try:
+            # First try with full datetime format
+            end_time_obj = datetime.strptime(
+                parsed_args.end_time, "%Y-%m-%d %H:%M:%S").replace(tzinfo=user_tz)
+        except ValueError:
+            try:
+                # Then try with date only format (set to end of day)
+                end_time_obj = datetime.strptime(
+                    parsed_args.end_time, "%Y-%m-%d").replace(tzinfo=user_tz)
+            except ValueError:
+                return f"Error: Invalid end time format '{parsed_args.end_time}'. Use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS"
+
+        # Convert to UTC for database storage
+        end_time_utc = end_time_obj.astimezone(UTC)
+        update_data["end_time"] = end_time_utc
+
+    # Validate that end_time is after start_time if both are being updated
+    if "start_time" in update_data and "end_time" in update_data:
+        start_time_val = update_data["start_time"]
+        end_time_val = update_data["end_time"]
+        if isinstance(start_time_val, datetime) and isinstance(end_time_val, datetime) and end_time_val <= start_time_val:
+            return "Error: End time must be after start time"
+    elif "start_time" in update_data and todo.end_time:
+        start_time_val = update_data["start_time"]
+        if isinstance(start_time_val, datetime) and isinstance(todo.end_time, datetime) and todo.end_time <= start_time_val:
+            return "Error: New start time must be before existing end time"
+    elif "end_time" in update_data and todo.start_time:
+        end_time_val = update_data["end_time"]
+        if isinstance(end_time_val, datetime) and isinstance(todo.start_time, datetime) and end_time_val <= todo.start_time:
+            return "Error: New end time must be after existing start time"
+
+    # Check for time conflicts if start_time or end_time is being updated
+    if "start_time" in update_data or "end_time" in update_data:
+        # Determine the final start and end times for conflict checking
+        final_start_time = update_data.get("start_time", todo.start_time)
+        final_end_time = update_data.get("end_time", todo.end_time)
+
+        if isinstance(final_start_time, datetime) and isinstance(final_end_time, datetime):
+            try:
+                conflicts = await _todo_service.check_time_conflict(
+                    _current_user_id, final_start_time, final_end_time, todo.id
+                )
+                if conflicts:
+                    conflict_details = []
+                    for conflict in conflicts:
+                        conflict_start = conflict.start_time.astimezone(
+                            user_tz).strftime("%Y-%m-%d %H:%M")
+                        conflict_end = conflict.end_time.astimezone(
+                            user_tz).strftime("%Y-%m-%d %H:%M")
+                        conflict_details.append(
+                            f"• '{conflict.item}' ({conflict_start} - {conflict_end})")
+
+                    conflict_list = "\n".join(conflict_details)
+                    return f"❌ Time conflict detected! The updated time slot conflicts with existing todos:\n{conflict_list}\n\nPlease choose a different time."
+            except Exception as e:
+                return f"Error checking for time conflicts: {e!s}"
+
     # Update the todo
     try:
         # Apply updates directly to the todo object
@@ -304,6 +443,14 @@ async def update_todo_impl(ctx: RunContextWrapper, args: str) -> str:
         if "alarm_time" in update_data:
             todo.alarm_time = update_data["alarm_time"]  # type: ignore
             updated_fields.append("alarm_time")
+
+        if "start_time" in update_data:
+            todo.start_time = update_data["start_time"]  # type: ignore
+            updated_fields.append("start_time")
+
+        if "end_time" in update_data:
+            todo.end_time = update_data["end_time"]  # type: ignore
+            updated_fields.append("end_time")
 
         if "importance" in update_data:
             todo.importance = update_data["importance"]  # type: ignore
@@ -644,19 +791,26 @@ async def _get_existing_todos_for_day(target_date: datetime, user_tz: ZoneInfo) 
     day_end_utc = day_end.astimezone(UTC)
 
     from advanced_alchemy.filters import LimitOffset
+    # Use start_time for scheduling-based queries
     filters = [
         m.Todo.user_id == _current_user_id,
-        m.Todo.alarm_time >= day_start_utc,
-        m.Todo.alarm_time <= day_end_utc
+        m.Todo.start_time >= day_start_utc,
+        m.Todo.start_time <= day_end_utc
     ]
     if not _todo_service:
-        raise RuntimeError("Todo service not initialized")
+        msg = "Todo service not initialized"
+        raise RuntimeError(msg)
     existing_todos, _ = await _todo_service.list_and_count(*filters, LimitOffset(limit=50, offset=0))
-    existing_todos = [
-        todo for todo in existing_todos if todo.alarm_time is not None]
-    # Convert todos to user's timezone for scheduling
-    existing_todos.sort(key=lambda x: x.alarm_time)  # type: ignore
-    return existing_todos
+
+    # Filter todos that have start_time and end_time for proper scheduling
+    valid_todos = [
+        todo for todo in existing_todos
+        if todo.start_time is not None and todo.end_time is not None
+    ]
+
+    # Sort by start_time for scheduling logic
+    valid_todos.sort(key=lambda x: x.start_time)  # type: ignore
+    return valid_todos
 
 
 def _find_optimal_time_slot(target_date: datetime, parsed_args: ScheduleTodoArgs, existing_todos: list, user_tz: ZoneInfo) -> datetime | None:
@@ -707,15 +861,33 @@ async def _create_scheduled_todo(parsed_args: ScheduleTodoArgs, suggested_time: 
     except ValueError:
         pass
 
+    # Calculate end time based on duration
+    duration_delta = timedelta(minutes=parsed_args.duration_minutes)
+    end_time = suggested_time + duration_delta
+
+    # Double-check for time conflicts before creating
+    if not _todo_service or not _current_user_id:
+        msg = "Todo service not initialized"
+        raise RuntimeError(msg)
+
+    conflicts = await _todo_service.check_time_conflict(
+        _current_user_id, suggested_time.astimezone(
+            UTC), end_time.astimezone(UTC)
+    )
+    if conflicts:
+        conflict_details = [f"'{conflict.item}'" for conflict in conflicts]
+        msg = f"Time conflict detected with: {', '.join(conflict_details)}"
+        raise RuntimeError(msg)
+
     todo_data = {
         "item": parsed_args.item,
         "description": parsed_args.description,
         "importance": importance_enum,
         "user_id": _current_user_id,
+        "start_time": suggested_time.astimezone(UTC),
+        "end_time": end_time.astimezone(UTC),
         "alarm_time": suggested_time.astimezone(UTC)
     }
-    if not _todo_service:
-        raise RuntimeError("Todo service not initialized")
     return await _todo_service.create(todo_data)
 
 
@@ -736,15 +908,24 @@ def _find_free_slot(target_date: datetime, start_hour: int, end_hour: int, durat
 
     current_time = slot_start
     for todo in existing_todos:
-        todo_time_local = todo.alarm_time.astimezone(user_tz)
+        # Use start_time and end_time for proper conflict detection
+        if todo.start_time and todo.end_time:
+            todo_start_local = todo.start_time.astimezone(user_tz)
+            todo_end_local = todo.end_time.astimezone(user_tz)
+        elif todo.alarm_time:
+            # Fallback to alarm_time if start/end times are not available
+            todo_start_local = todo.alarm_time.astimezone(user_tz)
+            todo_end_local = todo_start_local + \
+                timedelta(hours=1)  # Assume 1 hour duration
+        else:
+            continue
 
         # Check if there's enough space before this todo
-        if current_time + duration_delta <= todo_time_local:
+        if current_time + duration_delta <= todo_start_local:
             return current_time
 
-        # Move current time to after this todo (assuming 1 hour duration)
-        current_time = max(current_time, todo_time_local +
-                           timedelta(hours=1))
+        # Move current time to after this todo
+        current_time = max(current_time, todo_end_local)
 
     # Check if there's space after the last todo
     if current_time + duration_delta <= slot_end:
@@ -917,13 +1098,18 @@ batch_update_schedule_tool = FunctionTool(
 )
 
 
-TODO_SYSTEM_INSTRUCTIONS = f"""You are a helpful todo list assistant with intelligent scheduling capabilities. You can create, delete, update, search todo items, and automatically schedule them based on the user's existing calendar.
+TODO_SYSTEM_INSTRUCTIONS = f"""You are a helpful todo list assistant with intelligent scheduling capabilities and automatic time conflict detection. You can create, delete, update, search todo items, and automatically schedule them based on the user's existing calendar while preventing time conflicts.
 
 When creating todos:
 - Extract the main task as the 'item' (title)
 - Use any additional details as 'description'
-- Parse dates/times if mentioned for 'alarm_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
-- If auto_schedule is true and no alarm_time is specified, use the schedule_todo tool to find optimal time slots
+- REQUIRED: Parse and include 'start_time' and 'end_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD) - these are mandatory fields
+- Optional: Parse 'alarm_time' if mentioned (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD) for reminders/notifications
+- Ensure end_time is always after start_time
+- AUTOMATIC CONFLICT DETECTION: The system will automatically check for time conflicts with existing todos and prevent overlapping schedules
+- If conflicts are detected, inform the user about conflicting todos and suggest alternative times
+- If the user only provide start_time and duration, calculate end_time based on the duration (default: 60 minutes)
+- If auto_schedule is true and no specific times are provided, use the schedule_todo tool to find optimal time slots
 - Assign appropriate importance: none (default), low, medium, high
 - Suggest relevant tags like: 'work', 'personal', 'study', 'shopping', 'health', 'entertainment'
 - Support timezone parameter for proper date parsing (e.g., 'America/New_York', 'Asia/Shanghai')
@@ -939,7 +1125,10 @@ When deleting todos:
 When updating todos:
 - Require the todo ID (UUID) to identify which todo to update
 - Only update the fields that the user wants to change
-- Parse dates/times if mentioned for 'alarm_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
+- Parse dates/times if mentioned for 'start_time', 'end_time', or 'alarm_time' (format: YYYY-MM-DD HH:MM:SS or YYYY-MM-DD)
+- AUTOMATIC CONFLICT DETECTION: If start_time or end_time is being updated, the system will check for conflicts with other todos
+- If conflicts are detected during updates, inform the user and suggest alternative times
+- Ensure that if both start_time and end_time are updated, end_time is after start_time
 - Support timezone parameter for proper date parsing (e.g., 'America/New_York', 'Asia/Shanghai')
 - If no timezone is specified, UTC is used for date parsing
 - Validate importance levels: none, low, medium, high
@@ -950,8 +1139,8 @@ When listing todos:
 - Support filtering by date range (from_date, to_date) and importance level
 - Support timezone parameter for proper date filtering and display (e.g., 'America/New_York', 'Asia/Shanghai')
 - If no timezone is specified, UTC is used for filtering and display
-- Display results with ID, title, description, plan time, and importance
-- Plan times are shown in the user's specified timezone (or UTC if not specified)
+- Display results with title, description, start time, end time, alarm time (if set), and importance
+- All times are shown in the user's specified timezone (or UTC if not specified)
 - Limit results to avoid overwhelming output (default 20)
 - Show applied filters in the response for clarity
 - Do not return the ID of the user and todo items.
@@ -962,41 +1151,47 @@ When searching todos:
 - Filter by date ranges using from_date and to_date
 - Support timezone parameter for proper date filtering and display (e.g., 'America/New_York', 'Asia/Shanghai')
 - If no timezone is specified, UTC is used for filtering and display
-- Plan times are shown in the user's specified timezone (or UTC if not specified)
+- All times are shown in the user's specified timezone (or UTC if not specified)
 - Limit results (default 10) to avoid overwhelming output
-- Display results with, title, description, plan time, and importance
+- Display results with title, description, start time, end time, alarm time (if set), and importance
 - Do not return the ID of the user and todo items.
 
-Intelligent Scheduling Capabilities:
-- Use analyze_schedule tool to show the user their schedule and identify free time slots
-- Use schedule_todo tool when the user wants to create a todo without specifying exact time
+Intelligent Scheduling Capabilities with Conflict Prevention:
+- Use analyze_schedule tool to show the user their schedule and identify free time slots based on start_time and end_time
+- Use schedule_todo tool when the user wants to create a todo without specifying exact times
+- CONFLICT-FREE SCHEDULING: All scheduling functions automatically avoid time conflicts by checking against existing todos
 - Prefer user's time preferences (morning, afternoon, evening) when scheduling
 - Consider estimated duration when finding time slots
 - Use batch_update_schedule tool when rescheduling multiple todos to resolve conflicts
 - Always show proposed changes before applying batch updates (confirm: false first)
 - Apply timezone awareness throughout all scheduling operations
+- Schedule analysis considers the actual duration of todos (end_time - start_time)
 
 Schedule Analysis:
 - Analyze schedules for specific date ranges (default: 3 days starting today)
-- Show existing todos with their times and importance levels
-- Identify free time slots between 8 AM and 10 PM (working hours)
+- Show existing todos with their start times, end times, and importance levels
+- Identify free time slots between scheduled todos (8 AM and 10 PM working hours)
 - Highlight conflicts and suggest optimal scheduling times
 - Support different timezones for international users
+- Consider actual todo durations when finding available slots
 
-Auto-Scheduling Logic:
-- When creating todos without specific times, automatically find optimal slots
+Auto-Scheduling Logic with Conflict Prevention:
+- When creating todos without specific times, automatically find optimal slots based on duration
+- GUARANTEED CONFLICT-FREE: All auto-scheduling respects existing todo time slots
 - Consider user preferences for time of day (morning/afternoon/evening)
-- Estimate task duration (default: 60 minutes) and find adequate time slots
-- Avoid scheduling conflicts with existing todos
+- Estimate task duration (default: 60 minutes) and find adequate time slots that don't overlap
+- Avoid scheduling conflicts with existing todos by checking start_time and end_time
 - Suggest rescheduling existing todos if no free slots are available
+- Ensure proper time gaps between consecutive todos
 
 Conflict Resolution:
-- Detect scheduling conflicts when adding new todos
+- Detect scheduling conflicts when adding new todos or updating existing ones
 - Propose solutions such as rescheduling lower-priority items
 - Use batch update operations to efficiently resolve multiple conflicts
 - Always require user confirmation before making schedule changes
+- Provide clear information about conflicting todos including their time slots
 
-If the user's input is unclear, ask for clarification. Always be helpful and ensure a smooth user experience. When you return the results, do not include any sensitive information or personal data, and do not return the UUID of the user and todo items.
+If the user's input is unclear, ask for clarification. Always be helpful and ensure a smooth user experience. When you return the results, do not include any sensitive information or personal data, and do not return the UUID of the user and todo items. The system automatically prevents time conflicts, ensuring users never have overlapping todo schedules.
 
 Today's date is {datetime.now(tz=UTC).strftime('%Y-%m-%d')}."""
 
