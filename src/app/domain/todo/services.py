@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID  # noqa: TC003
 
 from advanced_alchemy.repository import (
@@ -10,8 +11,9 @@ from advanced_alchemy.service import (
 )
 
 from app.db import models as m
-from sqlalchemy import select
-from typing import List
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 class TodoService(SQLAlchemyAsyncRepositoryService[m.Todo]):
@@ -31,6 +33,40 @@ class TodoService(SQLAlchemyAsyncRepositoryService[m.Todo]):
         if not todo:
             return None
         return todo
+
+    async def check_time_conflict(
+        self,
+        user_id: UUID,
+        start_time: datetime,
+        end_time: datetime,
+        exclude_todo_id: UUID | None = None
+    ) -> list[m.Todo]:
+        """Check for time conflicts with existing todos for a user.
+
+        Args:
+            user_id: The user's UUID
+            start_time: The start time to check for conflicts
+            end_time: The end time to check for conflicts
+            exclude_todo_id: Optional todo ID to exclude from conflict checking (for updates)
+
+        Returns:
+            List of conflicting Todo objects, empty if no conflicts
+        """
+        # Two time ranges overlap if:
+        # 1. The new start_time is before existing end_time AND
+        # 2. The new end_time is after existing start_time
+        filters = [
+            m.Todo.user_id == user_id,
+            m.Todo.start_time < end_time,  # existing start is before new end
+            m.Todo.end_time > start_time,  # existing end is after new start
+        ]
+
+        # Exclude the current todo if updating
+        if exclude_todo_id:
+            filters.append(m.Todo.id != exclude_todo_id)
+
+        conflicts, _ = await self.list_and_count(*filters)
+        return list(conflicts)
 
 
 class TagService(SQLAlchemyAsyncRepositoryService[m.Tag]):
