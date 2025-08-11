@@ -30,8 +30,8 @@ class TodoCreate(PydanticBaseModel):
     item: str
     description: str | None = None
     alarm_time: datetime | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    start_time: datetime
+    end_time: datetime
     importance: Importance = Importance.NONE
     tags: list[str] | None = None
 
