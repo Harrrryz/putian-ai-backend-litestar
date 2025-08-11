@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID  # noqa: TC003
 
 from advanced_alchemy.base import UUIDAuditBase
-from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

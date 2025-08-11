@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import enum
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID  # noqa: TC003
 
 from advanced_alchemy.base import UUIDAuditBase
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Integer, String, func
+from sqlalchemy import Enum, ForeignKey, String
 from sqlalchemy.ext.associationproxy import AssociationProxy, association_proxy
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,7 +22,7 @@ class Todo(UUIDAuditBase):
 
     __tablename__ = "todo"
     __table_args__ = {"comment": "Todo items"}
-    __pii_columns__ = {"item", "created_time", "plan_time",
+    __pii_columns__ = {"item", "created_time", "alarm_time",
                        "content", "user", "importance", "tags"}
 
     item: Mapped[str] = mapped_column(
@@ -31,14 +30,16 @@ class Todo(UUIDAuditBase):
     description: Mapped[str] = mapped_column(
         String(length=1024), nullable=True)
     created_time: Mapped[datetime] = mapped_column(
-        default=datetime.now(UTC), nullable=False)
-    plan_time: Mapped[datetime | None] = mapped_column(
-        default=datetime.now(UTC), nullable=True)
+        default=lambda: datetime.now(UTC), nullable=False)
+    alarm_time: Mapped[datetime | None] = mapped_column(
+        nullable=True)
     importance: Mapped[Importance] = mapped_column(Enum(
         Importance, name="importance_enum", native_enum=False), nullable=False, default=Importance.NONE)
     user_id: Mapped[UUID] = mapped_column(
         ForeignKey("user_account.id", ondelete="CASCADE"), nullable=False
     )
+    start_time: Mapped[datetime] = mapped_column(nullable=False)
+    end_time: Mapped[datetime] = mapped_column(nullable=False)
 
     # -----------
     # ORM Relationships
