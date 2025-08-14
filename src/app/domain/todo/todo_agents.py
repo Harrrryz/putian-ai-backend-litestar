@@ -1,17 +1,23 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Sequence
+from typing import TYPE_CHECKING
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, RunContextWrapper
+from agents import Agent, FunctionTool, OpenAIChatCompletionsModel, RunContextWrapper, Runner
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.base import get_settings
 from app.db import models as m
 from app.db.models.importance import Importance
 from app.db.models.todo import Todo
 from app.domain.todo.services import TagService, TodoService
+# OpenAI Agents SDK integration with persistent session support
+from app.lib.database_session import DatabaseSession
 
 
 class CreateTodoArgs(BaseModel):
@@ -1197,6 +1203,232 @@ Today's date is {datetime.now(tz=UTC).strftime('%Y-%m-%d')}."""
 
 
 def get_todo_agent() -> Agent:
+    """Create and return a configured todo agent."""
+    settings = get_settings()
+
+    model = OpenAIChatCompletionsModel(
+        model="doubao-1.5-pro-32k-250115",
+        openai_client=AsyncOpenAI(
+            api_key=settings.ai.VOLCENGINE_API_KEY,
+            base_url=settings.ai.VOLCENGINE_BASE_URL,
+        )
+    )
+
+    return Agent(
+        name="TodoAssistant",
+        instructions=TODO_SYSTEM_INSTRUCTIONS,
+        model=model,
+        tools=[create_todo_tool, delete_todo_tool, update_todo_tool, get_todo_list_tool,
+               analyze_schedule_tool, schedule_todo_tool, batch_update_schedule_tool]
+    )
+
+
+def create_todo_agent_session(
+    session_id: str,
+    user_id: str,
+    db_session: "AsyncSession",
+    todo_service: TodoService,
+    tag_service: TagService,
+    session_name: str | None = None,
+) -> DatabaseSession:
+    """Create a DatabaseSession for persistent todo agent conversations.
+
+    This function creates a database-backed session that integrates with the
+    OpenAI Agents SDK, providing persistent conversation history for todo management.
+
+    Args:
+        session_id: Unique identifier for the conversation session
+        user_id: ID of the user who owns this session
+        db_session: SQLAlchemy async session for database operations
+        todo_service: TodoService instance for todo operations
+        tag_service: TagService instance for tag operations
+        session_name: Optional human-readable session name
+
+    Returns:
+        DatabaseSession configured for todo agent conversations
+
+    Example:
+        >>> # Create session for todo management
+        >>> session = create_todo_agent_session(
+        ...     session_id=f"user_{user_id}_todo_assistant",
+        ...     user_id=user_id,
+        ...     db_session=db_session,
+        ...     todo_service=todo_service,
+        ...     tag_service=tag_service,
+        ...     session_name="Todo Management Chat",
+        ... )
+        >>> 
+        >>> # Set agent context for this user
+        >>> set_agent_context(todo_service, tag_service, UUID(user_id))
+        >>> 
+        >>> # Use with OpenAI Agents SDK
+        >>> from agents import Runner
+        >>> agent = get_todo_agent()
+        >>> result = await Runner.run(
+        ...     agent,
+        ...     "Create a todo item for grocery shopping tomorrow",
+        ...     session=session
+        ... )
+    """
+    return DatabaseSession(
+        session_id=session_id,
+        user_id=user_id,
+        db_session=db_session,
+        agent_name="TodoAssistant",
+        agent_instructions=TODO_SYSTEM_INSTRUCTIONS,
+        session_name=session_name or "Todo Management Chat",
+    )
+
+
+class TodoAgentSessionService:
+    """Service class for managing todo agent sessions with persistent conversation history."""
+
+    def __init__(self, db_session: "AsyncSession", todo_service: TodoService, tag_service: TagService) -> None:
+        """Initialize the service with required dependencies.
+
+        Args:
+            db_session: SQLAlchemy async session for database operations
+            todo_service: TodoService instance for todo operations
+            tag_service: TagService instance for tag operations
+        """
+        self.db_session = db_session
+        self.todo_service = todo_service
+        self.tag_service = tag_service
+
+    def create_session(
+        self,
+        session_id: str,
+        user_id: str,
+        session_name: str | None = None,
+    ) -> DatabaseSession:
+        """Create a new todo agent session.
+
+        Args:
+            session_id: Unique identifier for the conversation session
+            user_id: ID of the user who owns this session
+            session_name: Optional human-readable session name
+
+        Returns:
+            DatabaseSession configured for todo agent conversations
+        """
+        return create_todo_agent_session(
+            session_id=session_id,
+            user_id=user_id,
+            db_session=self.db_session,
+            todo_service=self.todo_service,
+            tag_service=self.tag_service,
+            session_name=session_name,
+        )
+
+    async def chat_with_agent(
+        self,
+        session_id: str,
+        user_id: str,
+        message: str,
+        session_name: str | None = None,
+    ) -> str:
+        """Send a message to the todo agent and get a response with persistent conversation history.
+
+        Args:
+            session_id: Unique identifier for the conversation session
+            user_id: ID of the user who owns this session
+            message: User message to send to the agent
+            session_name: Optional human-readable session name
+
+        Returns:
+            Agent's response as a string
+
+        Example:
+            >>> service = TodoAgentSessionService(db_session, todo_service, tag_service)
+            >>> response = await service.chat_with_agent(
+            ...     session_id="user_123_todo",
+            ...     user_id="user_123",
+            ...     message="Create a todo for buying groceries tomorrow at 2 PM",
+            ... )
+            >>> print(response)
+            "I've created a todo item for grocery shopping..."
+        """
+        # Set the agent context for this user
+        set_agent_context(self.todo_service, self.tag_service, UUID(user_id))
+
+        # Create or get existing session
+        session = self.create_session(
+            session_id=session_id,
+            user_id=user_id,
+            session_name=session_name,
+        )
+
+        # Get the todo agent
+        agent = get_todo_agent()
+
+        # Run the agent with the session
+        result = await Runner.run(agent, message)
+
+        return result.final_output
+
+    async def list_user_sessions(self, user_id: str) -> list[dict]:
+        """List all agent sessions for a user.
+
+        Args:
+            user_id: ID of the user
+
+        Returns:
+            List of session metadata dictionaries
+        """
+        from sqlalchemy.future import select
+        from app.db.models import AgentSession
+
+        stmt = select(AgentSession).where(AgentSession.user_id == user_id)
+        result = await self.db_session.execute(stmt)
+        sessions = result.scalars().all()
+
+        return [
+            {
+                "id": str(session.id),
+                "session_id": session.session_id,
+                "session_name": session.session_name,
+                "agent_name": session.agent_name,
+                "is_active": session.is_active,
+                "created_at": session.created_at,
+                "updated_at": session.updated_at,
+            }
+            for session in sessions
+        ]
+
+    async def get_session_history(self, session_id: str, user_id: str, limit: int | None = None) -> list[dict]:
+        """Get conversation history for a session.
+
+        Args:
+            session_id: Unique identifier for the conversation session
+            user_id: ID of the user who owns this session
+            limit: Optional limit on number of messages to return
+
+        Returns:
+            List of message dictionaries in OpenAI format
+        """
+        session = self.create_session(session_id=session_id, user_id=user_id)
+        return await session.get_items(limit=limit)
+
+    async def clear_session_history(self, session_id: str, user_id: str) -> None:
+        """Clear all messages from a session.
+
+        Args:
+            session_id: Unique identifier for the conversation session
+            user_id: ID of the user who owns this session
+        """
+        session = self.create_session(session_id=session_id, user_id=user_id)
+        await session.clear_session()
+
+
+# Legacy function maintained for backward compatibility
+def get_todo_agent_legacy() -> Agent:
+    """Create and return a configured todo agent (legacy function).
+
+    This is the original get_todo_agent function, kept for backward compatibility.
+    For new implementations with session support, use create_todo_agent_session()
+    or TodoAgentSessionService instead.
+    """
+    return get_todo_agent()
     """Create and return a configured todo agent."""
     settings = get_settings()
 
