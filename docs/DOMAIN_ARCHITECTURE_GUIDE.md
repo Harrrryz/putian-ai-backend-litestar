@@ -349,13 +349,14 @@ from . import controllers, deps, schemas, services, urls
 __all__ = ("controllers", "deps", "schemas", "services", "urls")
 ```
 
-### 10. Register Controllers in Main Application
+### 10. Register Controllers and Services in Main Application
 
-Update `src/app/server/core.py` to include your new controllers:
+Update `src/app/server/core.py` to include your new controllers and services:
 
 ```python
 # In the imports section
 from app.domain.{domain_name}.controllers import YourModelController
+from app.domain.{domain_name}.services import YourModelService
 
 # In the route_handlers list
 app_config.route_handlers.extend(
@@ -368,7 +369,17 @@ app_config.route_handlers.extend(
         YourModelController,  # Add your new controller
     ],
 )
+
+# IMPORTANT: Add to signature_namespace to prevent type hint resolution errors
+app_config.signature_namespace.update(
+    {
+        # ... existing services ...
+        "YourModelService": YourModelService,  # Add your new service
+    },
+)
 ```
+
+**⚠️ Critical Note**: Any service class that is used in type hints within controllers (especially with `Annotated[ServiceName, Dependency()]`) MUST be added to the `signature_namespace`. Failure to do this will result in `NameError: name 'ServiceName' is not defined` errors during application startup.
 
 ### 11. Add Guards (Optional)
 
@@ -420,6 +431,69 @@ event_emitter = SimpleEventEmitter()
 event_emitter.on("after_create", after_create_handler)
 ```
 
+## Common Issues and Solutions
+
+### Type Hint Resolution Errors
+
+**Problem**: `NameError: name 'ServiceName' is not defined` during application startup.
+
+**Cause**: Service classes used in controller type hints are not available in the global namespace when Litestar tries to resolve forward references.
+
+**Solution**: Always add service classes to the signature namespace in `core.py`:
+
+```python
+# In core.py, add service imports
+from app.domain.your_domain.services import YourService
+
+# Add to signature_namespace
+app_config.signature_namespace.update(
+    {
+        # ... existing entries ...
+        "YourService": YourService,
+    },
+)
+```
+
+**Examples of patterns that require signature namespace registration**:
+- `Annotated["ServiceName", Dependency()]`
+- `service: ServiceName` in controller method parameters
+- Any forward reference to a service class in type hints
+
+### Status Code Issues with DELETE Endpoints
+
+**Problem**: `ImproperlyConfiguredException` about status codes not supporting response bodies.
+
+**Cause**: DELETE endpoints default to status code 204 (No Content) but are trying to return response data.
+
+**Solution**: Explicitly set `status_code=200` for DELETE endpoints that return data:
+
+```python
+@delete(path="/resource/{id}", status_code=200)  # Explicitly set status code
+async def delete_resource(self, id: UUID) -> dict[str, Any]:
+    # ... implementation that returns data
+    return {"message": "Deleted successfully", "count": 1}
+```
+
+### Dependency Provider Configuration
+
+**Problem**: Service dependencies not being injected correctly.
+
+**Solution**: Ensure dependency providers are properly configured in `deps.py`:
+
+```python
+provide_your_service = create_service_provider(
+    YourService,
+    load=[
+        joinedload(m.YourModel.related_field),  # Eager load relationships
+    ],
+    error_messages={
+        "duplicate_key": "Specific error message",
+        "integrity": "Integrity constraint violation",
+        "not_found": "Resource not found",
+    },
+)
+```
+
 ## Best Practices
 
 ### 1. Naming Conventions
@@ -452,18 +526,27 @@ When defining relationships, always consider:
 - Back references in models
 - Cascade behaviors for deletions
 
-### 4. Security Considerations
+### 6. Security Considerations
 
 - Use appropriate guards for controllers
 - Validate user permissions in services
 - Sanitize input data in schemas
 - Use dependency injection for user context
+- **Always add service classes to signature namespace** when used in type hints
+
+### 7. Type Safety and Imports
+
+- Import services in `core.py` when they're used in controller type hints
+- Add all service classes to `app_config.signature_namespace.update()`
+- Use proper forward reference syntax: `Annotated["ServiceName", Dependency()]`
+- Test application startup after adding new domains to catch type resolution errors early
 
 ### 5. Testing
 
 Create corresponding test files:
 - `tests/unit/domain/{domain_name}/test_services.py`
 - `tests/integration/test_{domain_name}.py`
+- **Test application startup** after adding new domains to ensure type resolution works correctly
 
 ### 6. Documentation
 
@@ -532,5 +615,19 @@ When adding new domains, remember to:
 3. Add integration tests
 4. Update deployment configurations if needed
 5. Consider backwards compatibility
+6. **Test application startup** to verify signature namespace registration
+7. **Add all service classes** used in type hints to `core.py` signature namespace
+
+### Troubleshooting Checklist
+
+Before deploying new domains, verify:
+
+- [ ] All service classes are imported in `core.py`
+- [ ] All service classes are added to `signature_namespace.update()`
+- [ ] Controllers are added to `route_handlers`
+- [ ] Application starts without `NameError` exceptions
+- [ ] DELETE endpoints returning data have explicit `status_code=200`
+- [ ] Database models are exported in `models/__init__.py`
+- [ ] Dependencies are properly configured in `deps.py`
 
 This architecture promotes maintainability, testability, and clear separation of concerns while following established patterns in the codebase.
