@@ -174,7 +174,7 @@ class SessionMessageController(Controller):
 
         await message_service.delete(message_id)
 
-    @delete(operation_id="ClearSessionMessages", path=urls.SESSION_CLEAR_MESSAGES)
+    @delete(operation_id="ClearSessionMessages", path=urls.SESSION_CLEAR_MESSAGES, status_code=200)
     async def clear_messages(
         self,
         current_user: "m.User",
