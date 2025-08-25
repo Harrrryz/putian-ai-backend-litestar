@@ -15,8 +15,8 @@ from app.config.base import get_settings
 from app.db import models as m
 from app.db.models.importance import Importance
 from app.db.models.todo import Todo
+from app.domain.agent_sessions.services import AgentSessionService, SessionMessageService
 from app.domain.todo.services import TagService, TodoService
-# OpenAI Agents SDK integration with persistent session support
 from app.lib.database_session import DatabaseSession
 
 
@@ -1280,45 +1280,35 @@ def create_todo_agent_session(
     )
 
 
-class TodoAgentSessionService:
-    """Service class for managing todo agent sessions with persistent conversation history."""
+class TodoAgentService:
+    """Service class for managing todo agent interactions with session persistence.
 
-    def __init__(self, db_session: "AsyncSession", todo_service: TodoService, tag_service: TagService) -> None:
+    This class integrates with the existing agent_sessions domain to provide
+    persistent conversation history for todo management agents.
+    """
+
+    def __init__(
+        self,
+        db_session: "AsyncSession",
+        todo_service: TodoService,
+        tag_service: TagService,
+        agent_session_service: AgentSessionService,
+        message_service: SessionMessageService,
+    ) -> None:
         """Initialize the service with required dependencies.
 
         Args:
             db_session: SQLAlchemy async session for database operations
             todo_service: TodoService instance for todo operations
             tag_service: TagService instance for tag operations
+            agent_session_service: AgentSessionService for session management
+            message_service: SessionMessageService for message management
         """
         self.db_session = db_session
         self.todo_service = todo_service
         self.tag_service = tag_service
-
-    def create_session(
-        self,
-        session_id: str,
-        user_id: str,
-        session_name: str | None = None,
-    ) -> DatabaseSession:
-        """Create a new todo agent session.
-
-        Args:
-            session_id: Unique identifier for the conversation session
-            user_id: ID of the user who owns this session
-            session_name: Optional human-readable session name
-
-        Returns:
-            DatabaseSession configured for todo agent conversations
-        """
-        return create_todo_agent_session(
-            session_id=session_id,
-            user_id=user_id,
-            db_session=self.db_session,
-            todo_service=self.todo_service,
-            tag_service=self.tag_service,
-            session_name=session_name,
-        )
+        self.agent_session_service = agent_session_service
+        self.message_service = message_service
 
     async def chat_with_agent(
         self,
@@ -1328,6 +1318,9 @@ class TodoAgentSessionService:
         session_name: str | None = None,
     ) -> str:
         """Send a message to the todo agent and get a response with persistent conversation history.
+
+        This method integrates with the agent_sessions domain to store conversation history
+        and provide context-aware responses.
 
         Args:
             session_id: Unique identifier for the conversation session
@@ -1339,7 +1332,7 @@ class TodoAgentSessionService:
             Agent's response as a string
 
         Example:
-            >>> service = TodoAgentSessionService(db_session, todo_service, tag_service)
+            >>> service = TodoAgentService(db_session, todo_service, tag_service, agent_session_service, message_service)
             >>> response = await service.chat_with_agent(
             ...     session_id="user_123_todo",
             ...     user_id="user_123",
@@ -1351,51 +1344,59 @@ class TodoAgentSessionService:
         # Set the agent context for this user
         set_agent_context(self.todo_service, self.tag_service, UUID(user_id))
 
-        # Create or get existing session
-        session = self.create_session(
-            session_id=session_id,
-            user_id=user_id,
-            session_name=session_name,
-        )
+        # Create or get existing session using agent sessions service
+        session = await self.agent_session_service.get_by_session_id(session_id, UUID(user_id))
+
+        if not session:
+            # Create new session
+            session_data = {
+                "session_id": session_id,
+                "session_name": session_name or "Todo Management Chat",
+                "user_id": UUID(user_id),
+                "agent_name": "TodoAssistant",
+                "agent_instructions": TODO_SYSTEM_INSTRUCTIONS,
+                "is_active": True,
+            }
+            session = await self.agent_session_service.create(session_data)
+
+        # Store user message in the session
+        from app.db.models.session_message import MessageRole
+        user_message_data = {
+            "session_id": session.id,
+            "role": MessageRole.USER,
+            "content": message,
+            "tool_call_id": None,
+            "tool_name": None,
+            "extra_data": None,
+        }
+        await self.message_service.create(user_message_data)
 
         # Get the todo agent
         agent = get_todo_agent()
 
-        # Run the agent with the session
+        # Run the agent to get response
         result = await Runner.run(agent, message)
+        response_content = result.final_output
 
-        return result.final_output
+        # Store assistant response in the session
+        assistant_message_data = {
+            "session_id": session.id,
+            "role": MessageRole.ASSISTANT,
+            "content": response_content,
+            "tool_call_id": None,
+            "tool_name": None,
+            "extra_data": None,
+        }
+        await self.message_service.create(assistant_message_data)
 
-    async def list_user_sessions(self, user_id: str) -> list[dict]:
-        """List all agent sessions for a user.
+        return response_content
 
-        Args:
-            user_id: ID of the user
-
-        Returns:
-            List of session metadata dictionaries
-        """
-        from sqlalchemy.future import select
-        from app.db.models import AgentSession
-
-        stmt = select(AgentSession).where(AgentSession.user_id == user_id)
-        result = await self.db_session.execute(stmt)
-        sessions = result.scalars().all()
-
-        return [
-            {
-                "id": str(session.id),
-                "session_id": session.session_id,
-                "session_name": session.session_name,
-                "agent_name": session.agent_name,
-                "is_active": session.is_active,
-                "created_at": session.created_at,
-                "updated_at": session.updated_at,
-            }
-            for session in sessions
-        ]
-
-    async def get_session_history(self, session_id: str, user_id: str, limit: int | None = None) -> list[dict]:
+    async def get_session_history(
+        self,
+        session_id: str,
+        user_id: str,
+        limit: int | None = None,
+    ) -> list[dict]:
         """Get conversation history for a session.
 
         Args:
@@ -1406,18 +1407,158 @@ class TodoAgentSessionService:
         Returns:
             List of message dictionaries in OpenAI format
         """
-        session = self.create_session(session_id=session_id, user_id=user_id)
-        return await session.get_items(limit=limit)
+        # Get session using agent sessions service
+        session = await self.agent_session_service.get_by_session_id(session_id, UUID(user_id))
+        if not session:
+            return []
 
-    async def clear_session_history(self, session_id: str, user_id: str) -> None:
+        # Get messages from the session
+        messages = await self.message_service.get_recent_messages(session.id, limit or 50)
+
+        # Convert to OpenAI format
+        return [
+            {
+                "role": msg.role.value,
+                "content": msg.content,
+            }
+            for msg in messages
+        ]
+
+    async def clear_session_history(
+        self,
+        session_id: str,
+        user_id: str,
+    ) -> None:
         """Clear all messages from a session.
 
         Args:
             session_id: Unique identifier for the conversation session
             user_id: ID of the user who owns this session
         """
-        session = self.create_session(session_id=session_id, user_id=user_id)
-        await session.clear_session()
+        # Get session using agent sessions service
+        session = await self.agent_session_service.get_by_session_id(session_id, UUID(user_id))
+        if session:
+            await self.message_service.clear_session_messages(session.id)
+
+    async def conversation(
+        self,
+        messages: list[dict],
+        session_id: str | None = None,
+        user_id: str | None = None,
+        session_name: str | None = None,
+        agent_name: str | None = None,
+        agent_instructions: str | None = None,
+    ) -> dict:
+        """Handle a conversation with the todo agent following the agent sessions pattern.
+
+        This method follows the same pattern as the agent_sessions conversation endpoint
+        to provide consistent API behavior.
+
+        Args:
+            messages: List of messages in OpenAI format
+            session_id: Optional session identifier
+            user_id: User identifier
+            session_name: Optional session name
+            agent_name: Optional agent name (defaults to "TodoAssistant")
+            agent_instructions: Optional agent instructions (defaults to TODO_SYSTEM_INSTRUCTIONS)
+
+        Returns:
+            Dictionary with session information and agent response
+        """
+        if not user_id:
+            msg = "user_id is required"
+            raise ValueError(msg)
+
+        # Generate session_id if not provided
+        if not session_id:
+            from datetime import UTC, datetime
+            session_id = f"todo_session_{user_id}_{datetime.now(tz=UTC).strftime('%Y%m%d_%H%M%S')}"
+
+        # Get the last user message for the agent
+        user_message = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                user_message = msg.get("content", "")
+                break
+
+        if not user_message:
+            user_message = "Hello"
+
+        # Process the conversation
+        response = await self.chat_with_agent(
+            session_id=session_id,
+            user_id=user_id,
+            message=user_message,
+            session_name=session_name,
+        )
+
+        # Get the session for metadata
+        session = await self.agent_session_service.get_by_session_id(session_id, UUID(user_id))
+        message_count = await self.message_service.get_session_message_count(session.id) if session else 0
+
+        return {
+            "session_id": session_id,
+            "session_uuid": str(session.id) if session else None,
+            "response": response,
+            "messages_count": message_count,
+            "session_active": session.is_active if session else True,
+        }
+
+
+# Alias for backward compatibility
+TodoAgentSessionService = TodoAgentService
+
+
+def create_todo_agent_service(
+    db_session: "AsyncSession",
+    todo_service: TodoService,
+    tag_service: TagService,
+    agent_session_service: AgentSessionService,
+    message_service: SessionMessageService,
+) -> TodoAgentService:
+    """Factory function to create TodoAgentService with proper dependencies.
+
+    Args:
+        db_session: SQLAlchemy async session for database operations
+        todo_service: TodoService instance for todo operations
+        tag_service: TagService instance for tag operations
+        agent_session_service: AgentSessionService for session management
+        message_service: SessionMessageService for message management
+
+    Returns:
+        Configured TodoAgentService instance
+    """
+    return TodoAgentService(
+        db_session=db_session,
+        todo_service=todo_service,
+        tag_service=tag_service,
+        agent_session_service=agent_session_service,
+        message_service=message_service,
+    )
+
+
+async def provide_todo_agent_service(
+    db_session: "AsyncSession",
+    todo_service: TodoService,
+    tag_service: TagService,
+    agent_session_service: AgentSessionService,
+    message_service: SessionMessageService,
+) -> TodoAgentService:
+    """Dependency provider for TodoAgentService.
+
+    This function can be used with Litestar's dependency injection system
+    to provide TodoAgentService instances to controllers.
+
+    Returns:
+        Configured TodoAgentService instance
+    """
+    return create_todo_agent_service(
+        db_session=db_session,
+        todo_service=todo_service,
+        tag_service=tag_service,
+        agent_session_service=agent_session_service,
+        message_service=message_service,
+    )
 
 
 # Legacy function maintained for backward compatibility
@@ -1425,8 +1566,7 @@ def get_todo_agent_legacy() -> Agent:
     """Create and return a configured todo agent (legacy function).
 
     This is the original get_todo_agent function, kept for backward compatibility.
-    For new implementations with session support, use create_todo_agent_session()
-    or TodoAgentSessionService instead.
+    For new implementations with session support, use TodoAgentService instead.
     """
     return get_todo_agent()
     """Create and return a configured todo agent."""
