@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -10,7 +11,6 @@ from app.domain.accounts.schemas import PydanticBaseModel
 
 if TYPE_CHECKING:
     from datetime import datetime
-    from uuid import UUID
 
     from app.db.models.session_message import MessageRole
 
@@ -120,9 +120,6 @@ class SessionConversationRequest(BaseModel):
         None, description="Optional session ID for conversation persistence")
     session_name: str | None = Field(
         None, description="Optional human-readable session name")
-    agent_name: str | None = Field(None, description="Name of the AI agent")
-    agent_instructions: str | None = Field(
-        None, description="Custom instructions for the AI agent")
 
 
 class SessionConversationResponse(BaseModel):
@@ -131,7 +128,7 @@ class SessionConversationResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     session_id: str = Field(..., description="Session identifier")
-    session_uuid: "UUID" = Field(..., description="Session UUID")
+    session_uuid: UUID = Field(..., description="Session UUID")
     response: str = Field(..., description="Agent response")
     messages_count: int = Field(...,
                                 description="Total number of messages in session")
