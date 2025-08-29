@@ -19,6 +19,7 @@ from .argument_models import (
     CreateTodoArgs,
     DeleteTodoArgs,
     GetTodoListArgs,
+    GetUserDatetimeArgs,
     ScheduleTodoArgs,
     UpdateTodoArgs,
 )
@@ -31,6 +32,7 @@ from .tool_implementations import (
     schedule_todo_impl,
     update_todo_impl,
 )
+from .universal_tools import get_user_datetime_impl
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -95,7 +97,15 @@ def get_tool_definitions() -> Sequence[FunctionTool]:
         on_invoke_tool=batch_update_schedule_impl,
     )
 
+    get_user_datetime_tool = FunctionTool(
+        name="get_user_datetime",
+        description="Get the user's current date, time, and timezone information. Use this tool before performing any time-based operations.",
+        params_json_schema=GetUserDatetimeArgs.model_json_schema(),
+        on_invoke_tool=get_user_datetime_impl,
+    )
+
     return [
+        get_user_datetime_tool,  # Universal tool should be first
         create_todo_tool,
         delete_todo_tool,
         update_todo_tool,

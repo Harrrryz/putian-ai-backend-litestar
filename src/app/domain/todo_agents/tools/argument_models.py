@@ -10,6 +10,7 @@ __all__ = [
     "CreateTodoArgs",
     "DeleteTodoArgs",
     "GetTodoListArgs",
+    "GetUserDatetimeArgs",
     "ScheduleConflictResolution",
     "ScheduleTodoArgs",
     "SearchTodoArgs",
@@ -129,6 +130,13 @@ class GetTodoListArgs(BaseModel):
         default=None, description="Filter by importance level: none, low, medium, high")
     timezone: str | None = Field(
         default=None, description="Timezone for date filtering (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used."
+    )
+
+
+class GetUserDatetimeArgs(BaseModel):
+    """Arguments for getting user's current date and time information."""
+    timezone: str | None = Field(
+        default=None, description="The user's timezone (e.g., 'America/New_York', 'Europe/London', 'Asia/Shanghai'). Defaults to UTC if not specified."
     )
 
 
