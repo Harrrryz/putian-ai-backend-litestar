@@ -28,10 +28,10 @@ def get_todo_agent() -> Agent:
 
     settings = get_settings()
     model = OpenAIChatCompletionsModel(
-        model="doubao-1.5-pro-32k-250115",
+        model="glm-4.5",
         openai_client=AsyncOpenAI(
-            api_key=settings.ai.VOLCENGINE_API_KEY,
-            base_url=settings.ai.VOLCENGINE_BASE_URL,
+            api_key=settings.ai.GLM_API_KEY,
+            base_url=settings.ai.GLM_BASE_URL,
         ),
     )
 
