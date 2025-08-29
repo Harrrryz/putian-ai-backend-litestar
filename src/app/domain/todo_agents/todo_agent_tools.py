@@ -383,7 +383,7 @@ async def update_todo_impl(ctx: RunContextWrapper, args: str) -> str:  # noqa: D
             return "Error: End time must be after start time"
     elif "start_time" in update_data and todo.end_time:
         # type: ignore[operator]
-        if todo.end_time <= update_data["start_time"]:
+        if todo.end_time <= update_data["start_time"]:  # type: ignore
             return "Error: New start time must be before existing end time"
     elif "end_time" in update_data and todo.start_time:
         if update_data["end_time"] <= todo.start_time:  # type: ignore[operator]

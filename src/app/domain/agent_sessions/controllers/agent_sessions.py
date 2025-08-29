@@ -7,7 +7,6 @@ from uuid import UUID
 
 from litestar import Controller, delete, get, patch, post, put
 from litestar.di import Provide
-from litestar.exceptions import NotFoundException
 from litestar.params import Dependency, Parameter
 
 from app.domain.agent_sessions import urls
@@ -19,6 +18,9 @@ from app.domain.agent_sessions.schemas import (
     SessionConversationRequest,
     SessionConversationResponse,
 )
+from app.domain.todo.deps import provide_tag_service, provide_todo_service
+from app.domain.todo_agents.deps import provide_todo_agent_service
+from app.domain.todo_agents.tools.system_instructions import TODO_SYSTEM_INSTRUCTIONS
 from app.lib.deps import create_filter_dependencies
 
 if TYPE_CHECKING:
@@ -27,6 +29,7 @@ if TYPE_CHECKING:
 
     from app.db import models as m
     from app.domain.agent_sessions.services import AgentSessionService, SessionMessageService
+    from app.domain.todo_agents.services import TodoAgentService
 
 
 class AgentSessionController(Controller):
@@ -34,8 +37,11 @@ class AgentSessionController(Controller):
 
     tags = ["Agent Sessions"]
     dependencies = {
-        "service": Provide(provide_agent_session_service),
         "message_service": Provide(provide_session_message_service),
+        "todo_service": Provide(provide_todo_service),
+        "tag_service": Provide(provide_tag_service),
+        "agent_session_service": Provide(provide_agent_session_service),
+        "todo_agent_service": Provide(provide_todo_agent_service),
     } | create_filter_dependencies(
         {
             "id_filter": UUID,
@@ -163,8 +169,9 @@ class AgentSessionController(Controller):
     async def agent_conversation(
         self,
         current_user: "m.User",
-        service: AgentSessionService,
+        agent_session_service: AgentSessionService,
         message_service: "SessionMessageService",
+        todo_agent_service: "TodoAgentService",
         data: SessionConversationRequest,
     ) -> SessionConversationResponse:
         """Start or continue a conversation with an AI agent."""
@@ -174,7 +181,7 @@ class AgentSessionController(Controller):
         session = None
         if data.session_id:
             # Try to find existing session
-            session = await service.get_by_session_id(data.session_id, current_user.id)
+            session = await agent_session_service.get_by_session_id(data.session_id, current_user.id)
 
         if not session:
             # Create new session
@@ -182,11 +189,11 @@ class AgentSessionController(Controller):
                 "session_id": data.session_id or f"session_{current_user.id}_{datetime.now(tz=UTC).strftime('%Y%m%d_%H%M%S')}",
                 "session_name": data.session_name or "AI Conversation",
                 "user_id": current_user.id,
-                "agent_name": data.agent_name or "Default Agent",
-                "agent_instructions": data.agent_instructions,
+                "agent_name": "TodoAssistant",
+                "agent_instructions": TODO_SYSTEM_INSTRUCTIONS,
                 "is_active": True,
             }
-            session = await service.create(session_data)
+            session = await agent_session_service.create(session_data)
 
         # Store user messages in the session
         for message in data.messages:
@@ -202,9 +209,30 @@ class AgentSessionController(Controller):
                 }
                 await message_service.create(message_data)
 
-        # For now, return a simple response
-        # In a real implementation, you would integrate with the OpenAI Agents SDK here
-        response_content = f"This is a mock response to: {data.messages[-1].get('content', 'Hello') if data.messages else 'Hello'}"
+        # Get the last user message to send to the agent
+        user_message = None
+        for message in reversed(data.messages):
+            if message.get("role") == "user":
+                user_message = message.get("content", "")
+                break
+
+        if not user_message:
+            user_message = "Hello"
+
+        # Use TodoAgentService for intelligent todo management
+        try:
+            response_content = await todo_agent_service.chat_with_agent(
+                session_id=session.session_id,
+                user_id=str(current_user.id),
+                message=user_message,
+                session_name=session.session_name,
+            )
+        except (ImportError, ModuleNotFoundError):
+            # Fallback if todo_agents domain is not available
+            response_content = f"I understand you want to discuss: '{user_message}'. However, the todo agent functionality is currently not available. Please try again later."
+        except (ValueError, RuntimeError) as e:
+            # Fallback response for business logic errors
+            response_content = f"I apologize, but I encountered an error while processing your request. Please try again. Error: {e!s}"
 
         # Store assistant response
         from app.db.models.session_message import MessageRole
