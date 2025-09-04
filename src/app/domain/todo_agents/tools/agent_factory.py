@@ -22,17 +22,16 @@ __all__ = [
 
 
 def get_todo_agent() -> Agent:
-    """Create and return a configured todo agent with all tools."""
-    from agents import Agent, OpenAIChatCompletionsModel
-    from openai import AsyncOpenAI
+    """Create and return a configured todo agent with LiteLLM."""
+    from agents import Agent
+    from agents.extensions.models.litellm_model import LitellmModel
 
     settings = get_settings()
-    model = OpenAIChatCompletionsModel(
-        model="glm-4.5",
-        openai_client=AsyncOpenAI(
-            api_key=settings.ai.GLM_API_KEY,
-            base_url=settings.ai.GLM_BASE_URL,
-        ),
+
+    model = LitellmModel(
+        model="openai/glm-4.5",
+        api_key=settings.ai.GLM_API_KEY,
+        base_url=settings.ai.GLM_BASE_URL,
     )
 
     tools = cast("list[Tool]", list(get_tool_definitions()))

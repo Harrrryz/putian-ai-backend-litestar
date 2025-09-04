@@ -92,6 +92,7 @@ class TodoAgentService:
         # Run the agent to get response
         result = await Runner.run(agent, message)
         response_content = result.final_output
+        print("Response:", result.to_input_list())
 
         # Store assistant response in the session
         assistant_message_data = {
