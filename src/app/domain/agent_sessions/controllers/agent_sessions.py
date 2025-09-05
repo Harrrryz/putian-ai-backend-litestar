@@ -225,7 +225,6 @@ class AgentSessionController(Controller):
                 session_id=session.session_id,
                 user_id=str(current_user.id),
                 message=user_message,
-                session_name=session.session_name,
             )
         except (ImportError, ModuleNotFoundError):
             # Fallback if todo_agents domain is not available

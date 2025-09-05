@@ -12,7 +12,6 @@ from litestar.params import Dependency
 if TYPE_CHECKING:
     import app.db.models as m
     from app.domain.todo_agents.services import TodoAgentService
-from app.domain.agent_sessions.deps import provide_agent_session_service, provide_session_message_service
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
 from app.domain.todo_agents import urls
 from app.domain.todo_agents.deps import provide_todo_agent_service
@@ -32,8 +31,6 @@ class TodoAgentController(Controller):
     dependencies = {
         "todo_service": Provide(provide_todo_service),
         "tag_service": Provide(provide_tag_service),
-        "agent_session_service": Provide(provide_agent_session_service),
-        "message_service": Provide(provide_session_message_service),
         "todo_agent_service": Provide(provide_todo_agent_service),
     }
 
@@ -73,16 +70,14 @@ class TodoAgentController(Controller):
 
             # Use the session-based agent to process the message
             response = await todo_agent_service.chat_with_agent(
-                session_id=session_id,
                 user_id=str(current_user.id),
                 message=user_message,
-                session_name=data.session_name or "Todo Management Chat"
+                session_id=session_id,
             )
 
             # Get the conversation history to return as agent_response
             conversation_history = await todo_agent_service.get_session_history(
                 session_id=session_id,
-                user_id=str(current_user.id),
                 limit=10  # Return last 10 messages
             )
 
@@ -107,9 +102,14 @@ class TodoAgentController(Controller):
         current_user: m.User,
         todo_agent_service: Annotated["TodoAgentService", Dependency(skip_validation=True)],
     ) -> dict[str, Any]:
-        """List all agent sessions for the current user."""
+        """List all active agent sessions."""
         try:
-            sessions = await todo_agent_service.list_user_sessions(str(current_user.id))
+            sessions = todo_agent_service.list_active_sessions()
+            # Filter sessions for this user (basic filtering by session ID pattern)
+            user_sessions = [
+                session_id for session_id in sessions 
+                if session_id.startswith(f"user_{current_user.id}_")
+            ]
         except Exception as e:
             logger.exception("Failed to list agent sessions",
                              error=str(e), user_id=current_user.id)
@@ -121,7 +121,31 @@ class TodoAgentController(Controller):
         else:
             return {
                 "status": "success",
-                "sessions": sessions
+                "sessions": user_sessions
+            }
+
+    @post(path="/agent-sessions/new", operation_id="create_new_session")
+    async def create_new_session(
+        self,
+        current_user: m.User,
+        todo_agent_service: Annotated["TodoAgentService", Dependency(skip_validation=True)],
+    ) -> dict[str, Any]:
+        """Create a new agent session with a unique ID."""
+        try:
+            session_id = await todo_agent_service.create_new_session(str(current_user.id))
+        except Exception as e:
+            logger.exception("Failed to create new session",
+                             error=str(e), user_id=current_user.id)
+            return {
+                "status": "error",
+                "message": f"Failed to create new session: {e!s}",
+                "session_id": None
+            }
+        else:
+            return {
+                "status": "success",
+                "message": "New session created successfully",
+                "session_id": session_id
             }
 
     @get(path="/agent-sessions/{session_id:str}/history", operation_id="get_session_history")
@@ -136,7 +160,6 @@ class TodoAgentController(Controller):
         try:
             history = await todo_agent_service.get_session_history(
                 session_id=session_id,
-                user_id=str(current_user.id),
                 limit=limit
             )
         except Exception as e:
@@ -164,8 +187,7 @@ class TodoAgentController(Controller):
         """Clear conversation history for a specific session."""
         try:
             await todo_agent_service.clear_session_history(
-                session_id=session_id,
-                user_id=str(current_user.id)
+                session_id=session_id
             )
         except Exception as e:
             logger.exception("Failed to clear session history",

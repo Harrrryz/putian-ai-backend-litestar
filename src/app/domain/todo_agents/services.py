@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-# (Removed unused datetime imports)
-from typing import TYPE_CHECKING, Any
+import uuid
+from typing import TYPE_CHECKING, Any, Sequence
 from uuid import UUID
 
-from agents import Runner
+from agents import Runner, SQLiteSession
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from app.domain.agent_sessions.services import AgentSessionService, SessionMessageService
     from app.domain.todo.services import TagService, TodoService
 
 from .tools.agent_factory import get_todo_agent
-from .tools.system_instructions import TODO_SYSTEM_INSTRUCTIONS
 from .tools.tool_context import set_agent_context
 
 __all__ = (
@@ -27,151 +25,145 @@ __all__ = (
 
 
 class TodoAgentService:
-    """Service class for managing todo agent interactions with session persistence.
+    """Service class for managing todo agent interactions with SQLite session persistence.
 
-    This class integrates with the existing agent_sessions domain to provide
-    persistent conversation history for todo management agents.
+    This class uses the official Agents SDK SQLiteSession for persistent conversation
+    history, eliminating the need for manual session management.
     """
 
     def __init__(
         self,
-        db_session: "AsyncSession",
         todo_service: "TodoService",
         tag_service: "TagService",
-        agent_session_service: "AgentSessionService",
-        message_service: "SessionMessageService",
+        session_db_path: str = "conversations.db",
     ) -> None:
-        """Initialize the service with required dependencies."""
-        self.db_session = db_session
+        """Initialize the service with required dependencies.
+
+        Args:
+            todo_service: Service for todo operations
+            tag_service: Service for tag operations
+            session_db_path: Path to SQLite database for storing conversations
+        """
         self.todo_service = todo_service
         self.tag_service = tag_service
-        self.agent_session_service = agent_session_service
-        self.message_service = message_service
+        self.session_db_path = session_db_path
+        self._sessions: dict[str, SQLiteSession] = {}
 
     async def chat_with_agent(
         self,
-        session_id: str,
         user_id: str,
         message: str,
-        session_name: str | None = None,
+        session_id: str | None = None,
     ) -> str:
-        """Send a message to the todo agent and get a response with persistent conversation history."""
+        """Send a message to the todo agent and get a response with persistent conversation history.
+
+        Args:
+            user_id: ID of the user sending the message
+            message: The message to send to the agent
+            session_id: Optional session ID. If None, a new unique session ID will be generated
+
+        Returns:
+            The agent's response
+        """
+        # Generate unique session ID if not provided
+        if session_id is None:
+            session_id = f"user_{user_id}_{uuid.uuid4().hex[:8]}"
+
         # Ensure tools have service context for this user
         set_agent_context(self.todo_service, self.tag_service, UUID(user_id))
 
-        # Create or get existing session using agent sessions service
-        session = await self.agent_session_service.get_by_session_id(session_id, UUID(user_id))
+        # Get or create SQLite session
+        if session_id not in self._sessions:
+            self._sessions[session_id] = SQLiteSession(
+                session_id, self.session_db_path)
 
-        if not session:
-            session_data = {
-                "session_id": session_id,
-                "session_name": session_name or "Todo Management Chat",
-                "user_id": UUID(user_id),
-                "agent_name": "TodoAssistant",
-                "agent_instructions": TODO_SYSTEM_INSTRUCTIONS,
-                "is_active": True,
-            }
-            session = await self.agent_session_service.create(session_data)
-
-        # Store user message in the session
-        from app.db.models.session_message import MessageRole
-
-        user_message_data = {
-            "session_id": session.id,
-            "role": MessageRole.USER,
-            "content": message,
-            "tool_call_id": None,
-            "tool_name": None,
-            "extra_data": None,
-        }
-        await self.message_service.create(user_message_data)
+        session = self._sessions[session_id]
 
         # Get the todo agent (with tools)
         agent = get_todo_agent()
 
-        # Run the agent to get response
-        result = await Runner.run(agent, message)
-        response_content = result.final_output
-        print("Response:", result.to_input_list())
+        # Run the agent with session - conversation history is automatically managed!
+        result = await Runner.run(agent, message, session=session)
 
-        # Store assistant response in the session
-        assistant_message_data = {
-            "session_id": session.id,
-            "role": MessageRole.ASSISTANT,
-            "content": response_content,
-            "tool_call_id": None,
-            "tool_name": None,
-            "extra_data": None,
-        }
-        await self.message_service.create(assistant_message_data)
-
-        return response_content
+        return result.final_output
 
     async def get_session_history(
         self,
         session_id: str,
-        user_id: str,
         limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Get conversation history for a session."""
-        # Get session using agent sessions service
-        session = await self.agent_session_service.get_by_session_id(session_id, UUID(user_id))
-        if not session:
+        """Get conversation history for a session.
+
+        Args:
+            session_id: The session ID to get history for
+            limit: Maximum number of items to retrieve (None for all)
+
+        Returns:
+            List of conversation items in chronological order
+        """
+        if session_id not in self._sessions:
+            # Return empty history if session doesn't exist
             return []
 
-        # Get messages from the session
-        messages = await self.message_service.get_recent_messages(session.id, limit or 50)
+        session = self._sessions[session_id]
+        items = await session.get_items(limit=limit)
 
-        # Convert to OpenAI format
-        return [
-            {
-                "role": msg.role.value,
-                "content": msg.content,
-            }
-            for msg in messages
-        ]
+        # Convert items to dict format for consistency
+        return [dict(item) for item in items]
 
     async def clear_session_history(
         self,
         session_id: str,
-        user_id: str,
     ) -> None:
-        """Clear all messages from a session."""
-        # Get session using agent sessions service
-        session = await self.agent_session_service.get_by_session_id(session_id, UUID(user_id))
-        if session:
-            await self.message_service.clear_session_messages(session.id)
+        """Clear all messages from a session.
 
-    async def list_user_sessions(self, user_id: str) -> list[dict[str, Any]]:
-        """List all agent sessions for a user."""
-        # Get sessions from the agent session service
-        sessions = await self.agent_session_service.list(
-            self.agent_session_service.model_type.user_id == UUID(user_id)
-        )
-        return [
-            {
-                "session_id": session.session_id,
-                "session_name": session.session_name,
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "is_active": session.is_active,
-            }
-            for session in sessions
-        ]
+        Args:
+            session_id: The session ID to clear
+        """
+        if session_id in self._sessions:
+            session = self._sessions[session_id]
+            await session.clear_session()
+
+    def list_active_sessions(self) -> list[str]:
+        """List all active session IDs currently in memory.
+
+        Returns:
+            List of active session IDs
+        """
+        return list(self._sessions.keys())
+
+    async def create_new_session(self, user_id: str) -> str:
+        """Create a new session with a unique ID.
+
+        Args:
+            user_id: The user ID to create the session for
+
+        Returns:
+            The new session ID
+        """
+        session_id = f"user_{user_id}_{uuid.uuid4().hex[:8]}"
+        self._sessions[session_id] = SQLiteSession(
+            session_id, self.session_db_path)
+        return session_id
 
 
 def create_todo_agent_service(
-    db_session: "AsyncSession",
     todo_service: "TodoService",
     tag_service: "TagService",
-    agent_session_service: "AgentSessionService",
-    message_service: "SessionMessageService",
+    session_db_path: str = "conversations.db",
 ) -> TodoAgentService:
-    """Factory function to create TodoAgentService with proper dependencies."""
+    """Factory function to create TodoAgentService with proper dependencies.
+
+    Args:
+        todo_service: Service for todo operations
+        tag_service: Service for tag operations
+        session_db_path: Path to SQLite database for storing conversations
+
+    Returns:
+        Configured TodoAgentService instance
+    """
     return TodoAgentService(
-        db_session=db_session,
         todo_service=todo_service,
         tag_service=tag_service,
-        agent_session_service=agent_session_service,
-        message_service=message_service,
+        session_db_path=session_db_path,
     )
