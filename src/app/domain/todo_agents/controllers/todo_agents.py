@@ -107,7 +107,7 @@ class TodoAgentController(Controller):
             sessions = todo_agent_service.list_active_sessions()
             # Filter sessions for this user (basic filtering by session ID pattern)
             user_sessions = [
-                session_id for session_id in sessions 
+                session_id for session_id in sessions
                 if session_id.startswith(f"user_{current_user.id}_")
             ]
         except Exception as e:

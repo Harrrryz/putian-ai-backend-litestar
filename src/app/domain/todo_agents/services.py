@@ -83,7 +83,7 @@ class TodoAgentService:
         agent = get_todo_agent()
 
         # Run the agent with session - conversation history is automatically managed!
-        result = await Runner.run(agent, message, session=session)
+        result = await Runner.run(agent, message, session=session, max_turns=20)
 
         return result.final_output
 

@@ -1,12 +1,13 @@
 from typing import Annotated
 from uuid import UUID
+from datetime import datetime
 
 import structlog
 from advanced_alchemy.filters import FilterTypes
 from advanced_alchemy.service import OffsetPagination
 from litestar import Controller, delete, get, patch, post
 from litestar.di import Provide
-from litestar.params import Dependency
+from litestar.params import Dependency, Parameter
 
 import app.db.models as m
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
@@ -30,7 +31,7 @@ class TodoController(Controller):
             "id_filter": UUID,
             "search": "item",
             "pagination_type": "limit_offset",
-            "pagination_size": 20,
+            "pagination_size": 40,
             "created_at": True,
             "updated_at": True,
             "sort_field": "created_time",
@@ -41,10 +42,36 @@ class TodoController(Controller):
     path = "/todos"
 
     @get(path="/", operation_id="list_todos")
-    async def list_todos(self, current_user: m.User, todo_service: TodoService, filters: Annotated[list[FilterTypes], Dependency(skip_validation=True)]) -> OffsetPagination[TodoModel]:
-        """List all todo items."""
+    async def list_todos(
+        self,
+        current_user: m.User,
+        todo_service: TodoService,
+        filters: Annotated[list[FilterTypes], Dependency(skip_validation=True)],
+        start_time_from: Annotated[datetime | None, Parameter(
+            query="start_time_from", description="Filter todos with start_time after this datetime (ISO format)")] = None,
+        start_time_to: Annotated[datetime | None, Parameter(
+            query="start_time_to", description="Filter todos with start_time before this datetime (ISO format)")] = None,
+        end_time_from: Annotated[datetime | None, Parameter(
+            query="end_time_from", description="Filter todos with end_time after this datetime (ISO format)")] = None,
+        end_time_to: Annotated[datetime | None, Parameter(
+            query="end_time_to", description="Filter todos with end_time before this datetime (ISO format)")] = None,
+    ) -> OffsetPagination[TodoModel]:
+        """List all todo items with optional start_time and end_time filtering."""
         user_filter = m.Todo.user_id == current_user.id
-        results, total = await todo_service.list_and_count(user_filter, *filters)
+        additional_filters = []
+
+        # Add custom datetime filters
+        if start_time_from:
+            additional_filters.append(m.Todo.start_time >= start_time_from)
+        if start_time_to:
+            additional_filters.append(m.Todo.start_time <= start_time_to)
+        if end_time_from:
+            additional_filters.append(m.Todo.end_time >= end_time_from)
+        if end_time_to:
+            additional_filters.append(m.Todo.end_time <= end_time_to)
+
+        all_filters = [user_filter] + additional_filters + list(filters)
+        results, total = await todo_service.list_and_count(*all_filters)
         return todo_service.to_schema(data=results, total=total, schema_type=TodoModel, filters=filters)
 
     @post(path="/", operation_id="create_todo")

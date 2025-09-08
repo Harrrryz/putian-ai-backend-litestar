@@ -448,14 +448,18 @@ def _format_todo_results(todos, user_tz: ZoneInfo) -> list[str]:
     """Format todo results for display."""
     results = []
     for t in todos:
-        if t.alarm_time:
-            at_local = t.alarm_time.astimezone(user_tz)
-            alarm_str = at_local.strftime(
-                "%Y-%m-%d %H:%M:%S") + (f" ({at_local.tzinfo})" if str(user_tz) != "UTC" else "")
+        5
+        if t.start_time and t.end_time:
+            start_local = t.start_time.astimezone(user_tz)
+            end_local = t.end_time.astimezone(user_tz)
+            plan_str = start_local.strftime(
+                "%Y-%m-%d %H:%M") + " - " + end_local.strftime("%Y-%m-%d %H:%M")
+            if str(user_tz) != "UTC":
+                plan_str += f" ({start_local.tzinfo})"
         else:
-            alarm_str = "No plan time"
+            plan_str = "No plan time"
         results.append(
-            f"• {t.item} (ID: {t.id})\n  Description: {t.description or 'No description'}\n  Plan time: {alarm_str}\n  Importance: {t.importance.value}"
+            f"• {t.item} (ID: {t.id})\n  Description: {t.description or 'No description'}\n  Plan time: {plan_str}\n  Importance: {t.importance.value}"
         )
     return results
 
