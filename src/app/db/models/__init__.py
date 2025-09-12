@@ -1,6 +1,8 @@
+from .agent_session import AgentSession
 from .importance import Importance
 from .oauth_account import UserOauthAccount
 from .role import Role
+from .session_message import MessageRole, SessionMessage
 from .tag import Tag
 from .todo import Todo
 from .todo_tag import TodoTag
@@ -8,8 +10,11 @@ from .user import User
 from .user_role import UserRole
 
 __all__ = (
+    "AgentSession",
     "Importance",
+    "MessageRole",
     "Role",
+    "SessionMessage",
     "Tag",
     "Todo",
     "TodoTag",

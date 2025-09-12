@@ -342,13 +342,17 @@ class AppSettings:
 class S3Settings:
     """S3 Client configurations."""
 
-    ACCESS_KEY: str | None = field(default_factory=get_env("S3_ACCESS_KEY", None))
+    ACCESS_KEY: str | None = field(
+        default_factory=get_env("S3_ACCESS_KEY", None))
     """S3 Access Key"""
-    SECRET_KEY: str | None = field(default_factory=get_env("S3_SECRET_KEY", None))
+    SECRET_KEY: str | None = field(
+        default_factory=get_env("S3_SECRET_KEY", None))
     """S3 Secret Key"""
-    BUCKET_NAME: str | None = field(default_factory=get_env("S3_BUCKET_NAME", None))
+    BUCKET_NAME: str | None = field(
+        default_factory=get_env("S3_BUCKET_NAME", None))
     """S3 Bucket Name"""
-    ENDPOINT_URL: str | None = field(default_factory=get_env("S3_ENDPOINT_URL", None))
+    ENDPOINT_URL: str | None = field(
+        default_factory=get_env("S3_ENDPOINT_URL", None))
     """S3 Endpoint URL"""
     REGION: str | None = field(default_factory=get_env("S3_REGION", None))
     """S3 Region"""
@@ -372,10 +376,18 @@ class S3Settings:
 class AISettings:
     """AI/LLM Client configurations."""
 
-    VOLCENGINE_API_KEY: str | None = field(default_factory=get_env("VOLCENGINE_API_KEY", None))
+    VOLCENGINE_API_KEY: str | None = field(
+        default_factory=get_env("VOLCENGINE_API_KEY", None))
     """VolcEngine API Key for Doubao models"""
-    VOLCENGINE_BASE_URL: str | None = field(default_factory=get_env("VOLCENGINE_BASE_URL", None))
+    VOLCENGINE_BASE_URL: str | None = field(
+        default_factory=get_env("VOLCENGINE_BASE_URL", None))
     """VolcEngine Base URL for API endpoints"""
+    GLM_API_KEY: str | None = field(
+        default_factory=get_env("GLM_API_KEY", None))
+    """GLM API Key for GLM models"""
+    GLM_BASE_URL: str | None = field(
+        default_factory=get_env("GLM_BASE_URL", None))
+    """GLM Base URL for API endpoints"""
 
 
 @dataclass

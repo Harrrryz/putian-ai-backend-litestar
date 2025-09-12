@@ -1,27 +1,21 @@
-from typing import Annotated, Any
+from typing import Annotated
 from uuid import UUID
+from datetime import datetime
 
 import structlog
 from advanced_alchemy.filters import FilterTypes
 from advanced_alchemy.service import OffsetPagination
 from litestar import Controller, delete, get, patch, post
 from litestar.di import Provide
-from litestar.params import Dependency
-from pydantic import BaseModel
+from litestar.params import Dependency, Parameter
 
 import app.db.models as m
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
-from app.domain.todo.schemas import AgentTodoResponse, TagCreate, TagModel, TodoCreate, TodoModel
+from app.domain.todo.schemas import TagCreate, TagModel, TodoCreate, TodoModel
 from app.domain.todo.services import TagService, TodoService
-from app.domain.todo.todo_agents import get_todo_agent, set_agent_context
 from app.lib.deps import create_filter_dependencies
 
 logger = structlog.get_logger()
-
-
-class AgentTodoRequest(BaseModel):
-    """Request schema for AI agent todo creation."""
-    messages: list[dict[str, Any]]
 
 
 class TodoController(Controller):
@@ -37,7 +31,7 @@ class TodoController(Controller):
             "id_filter": UUID,
             "search": "item",
             "pagination_type": "limit_offset",
-            "pagination_size": 20,
+            "pagination_size": 40,
             "created_at": True,
             "updated_at": True,
             "sort_field": "created_time",
@@ -48,10 +42,36 @@ class TodoController(Controller):
     path = "/todos"
 
     @get(path="/", operation_id="list_todos")
-    async def list_todos(self, current_user: m.User, todo_service: TodoService, filters: Annotated[list[FilterTypes], Dependency(skip_validation=True)]) -> OffsetPagination[TodoModel]:
-        """List all todo items."""
+    async def list_todos(
+        self,
+        current_user: m.User,
+        todo_service: TodoService,
+        filters: Annotated[list[FilterTypes], Dependency(skip_validation=True)],
+        start_time_from: Annotated[datetime | None, Parameter(
+            query="start_time_from", description="Filter todos with start_time after this datetime (ISO format)")] = None,
+        start_time_to: Annotated[datetime | None, Parameter(
+            query="start_time_to", description="Filter todos with start_time before this datetime (ISO format)")] = None,
+        end_time_from: Annotated[datetime | None, Parameter(
+            query="end_time_from", description="Filter todos with end_time after this datetime (ISO format)")] = None,
+        end_time_to: Annotated[datetime | None, Parameter(
+            query="end_time_to", description="Filter todos with end_time before this datetime (ISO format)")] = None,
+    ) -> OffsetPagination[TodoModel]:
+        """List all todo items with optional start_time and end_time filtering."""
         user_filter = m.Todo.user_id == current_user.id
-        results, total = await todo_service.list_and_count(user_filter, *filters)
+        additional_filters = []
+
+        # Add custom datetime filters
+        if start_time_from:
+            additional_filters.append(m.Todo.start_time >= start_time_from)
+        if start_time_to:
+            additional_filters.append(m.Todo.start_time <= start_time_to)
+        if end_time_from:
+            additional_filters.append(m.Todo.end_time >= end_time_from)
+        if end_time_to:
+            additional_filters.append(m.Todo.end_time <= end_time_to)
+
+        all_filters = [user_filter] + additional_filters + list(filters)
+        results, total = await todo_service.list_and_count(*all_filters)
         return todo_service.to_schema(data=results, total=total, schema_type=TodoModel, filters=filters)
 
     @post(path="/", operation_id="create_todo")
@@ -59,7 +79,6 @@ class TodoController(Controller):
         """Create a new todo item."""
         todo_dict = data.to_dict()
         todo_dict["user_id"] = current_user.id
-        print(todo_dict)
         todo_model = await todo_service.create(todo_dict)
         return todo_service.to_schema(todo_model, schema_type=TodoModel)
 
@@ -71,7 +90,7 @@ class TodoController(Controller):
             if not todo:
                 return f"Todo item {todo_id} not found."
             return todo_service.to_schema(todo, schema_type=TodoModel)
-        except Exception as e:
+        except (ValueError, RuntimeError, AttributeError) as e:
             return f"Error retrieving todo item {todo_id}: {e!s}"
 
     @patch(path="/{todo_id:uuid}", operation_id="update_todo")
@@ -92,8 +111,8 @@ class TodoController(Controller):
             if not todo:
                 return f"Todo item {todo_id} not found."
             await todo_service.delete(todo_id)
-            return todo_service.to_schema(todo,     schema_type=TodoModel)
-        except Exception as e:
+            return todo_service.to_schema(todo, schema_type=TodoModel)
+        except (ValueError, RuntimeError, AttributeError) as e:
             return f"Error deleting todo item {todo_id}: {e!s}"
 
     @post(path="/create_tag", operation_id="create_tag")
@@ -129,46 +148,3 @@ class TodoController(Controller):
         user_filter = m.Tag.user_id == current_user.id
         results, total = await tag_service.list_and_count(user_filter, *filters)
         return tag_service.to_schema(data=results, total=total, schema_type=TagModel, filters=filters)
-
-    @post(path="/agent-create", operation_id="agent_create_todo")
-    async def agent_create_todo(
-        self,
-        current_user: m.User,
-        data: AgentTodoRequest,
-        todo_service: TodoService,
-        tag_service: TagService
-    ) -> AgentTodoResponse:
-        """Create a todo using AI agent based on natural language input."""
-        try:
-            # Import Runner from agents
-            from agents import Runner
-
-            # Set the agent context with services and user
-            set_agent_context(todo_service, tag_service, current_user.id)
-
-            # Get the configured agent
-            agent = get_todo_agent()
-
-            # Process the user's messages with the agent using Runner
-            # Cast the messages to the expected type
-            result = await Runner.run(agent, data.messages)  # type: ignore
-
-            # Example of how to continue the conversation for multiple rounds:
-            # new_input = result.to_input_list() + [{"role": "user", "content": "What state is it in?"}]  # noqa: ERA001
-            # result = await Runner.run(agent, new_input)  # noqa: ERA001
-
-            return AgentTodoResponse(
-                status="success",
-                message=result.final_output,
-
-                agent_response=result.to_input_list()  # type: ignore
-            )
-
-        except Exception as e:
-            logger.exception("Agent todo creation failed",
-                             error=str(e), user_id=current_user.id)
-            return AgentTodoResponse(
-                status="error",
-                message=f"Failed to process todo with AI agent: {e!s}",
-                agent_response=[]
-            )

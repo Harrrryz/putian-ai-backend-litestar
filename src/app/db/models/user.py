@@ -9,6 +9,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
+    from .agent_session import AgentSession
     from .oauth_account import UserOauthAccount
     from .tag import Tag
     from .todo import Todo
@@ -55,6 +56,12 @@ class User(UUIDAuditBase):
         cascade="all, delete-orphan",
     )
     tags: Mapped[list[Tag]] = relationship(
+        back_populates="user",
+        lazy="selectin",
+        uselist=True,
+        cascade="all, delete-orphan",
+    )
+    agent_sessions: Mapped[list[AgentSession]] = relationship(
         back_populates="user",
         lazy="selectin",
         uselist=True,

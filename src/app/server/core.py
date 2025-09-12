@@ -62,8 +62,13 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
         from app.domain.accounts.deps import provide_user
         from app.domain.accounts.guards import auth as jwt_auth
         from app.domain.accounts.services import RoleService, UserService
+        from app.domain.agent_sessions.controllers import AgentSessionController, SessionMessageController
+        from app.domain.agent_sessions.services import AgentSessionService, SessionMessageService
         from app.domain.system.controllers import SystemController
         from app.domain.todo.controllers import TodoController
+        from app.domain.todo.services import TagService, TodoService
+        from app.domain.todo_agents.controllers import TodoAgentController
+        from app.domain.todo_agents.services import TodoAgentService
         from app.lib.exceptions import ApplicationError, exception_to_http_response
         from app.server import plugins
 
@@ -102,6 +107,9 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
                 UserController,
                 UserRoleController,
                 TodoController,
+                TodoAgentController,
+                AgentSessionController,
+                SessionMessageController,
             ],
         )
         # signatures
@@ -116,6 +124,11 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
                 "UserService": UserService,
                 "RoleService": RoleService,
                 "UserRoleService": UserRoleService,
+                "AgentSessionService": AgentSessionService,
+                "SessionMessageService": SessionMessageService,
+                "TodoService": TodoService,
+                "TagService": TagService,
+                "TodoAgentService": TodoAgentService,
             },
         )
         # exception handling
