@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .tag import Tag
     from .todo import Todo
     from .user_role import UserRole
+    from .user_usage_quota import UserUsageQuota
 
 
 class User(UUIDAuditBase):
@@ -64,6 +65,12 @@ class User(UUIDAuditBase):
     agent_sessions: Mapped[list[AgentSession]] = relationship(
         back_populates="user",
         lazy="selectin",
+        uselist=True,
+        cascade="all, delete-orphan",
+    )
+    usage_quotas: Mapped[list[UserUsageQuota]] = relationship(
+        back_populates="user",
+        lazy="noload",
         uselist=True,
         cascade="all, delete-orphan",
     )

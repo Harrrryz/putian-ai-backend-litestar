@@ -111,6 +111,8 @@ class ToolNameArgs(BaseModel):
 - `UpdateTodoArgs` - Todo modification parameters  
 - `DeleteTodoArgs` - Todo deletion parameters
 - `GetTodoListArgs` - List filtering parameters
+- `GetUserDatetimeArgs` - User timezone and datetime parameters
+- `GetUserQuotaArgs` - User quota and usage information parameters
 - `ScheduleTodoArgs` - Smart scheduling parameters
 - `AnalyzeScheduleArgs` - Schedule analysis parameters
 - `BatchUpdateScheduleArgs` - Bulk update parameters
@@ -145,6 +147,14 @@ Current date: {datetime.now(tz=UTC).strftime('%Y-%m-%d')}
 - Use dynamic content (current date)
 - Specify error handling approaches
 - Include security guidelines (no UUID exposure)
+- Document quota management and usage limits
+
+**Available Tools Documentation**:
+- Universal time context tool (`get_user_datetime`)
+- User quota information tool (`get_user_quota`)
+- Todo CRUD operations (create, read, update, delete)
+- Intelligent scheduling and conflict prevention
+- Schedule analysis and batch updates
 
 ### `tool_context.py` - Context Management
 
@@ -171,7 +181,9 @@ def get_service() -> Service | None:
 
 **Context Variables**:
 - `_todo_service` - Todo business logic service
-- `_tag_service` - Tag management service  
+- `_tag_service` - Tag management service
+- `_quota_service` - User usage quota service
+- `_rate_limit_service` - Rate limiting service
 - `_current_user_id` - Current user identifier
 
 ### `tool_definitions.py` - Tool Schema Registry
@@ -253,6 +265,16 @@ class NewToolArgs(BaseModel):
     )
 ```
 
+**Real Example - User Quota Tool**:
+```python
+class GetUserQuotaArgs(BaseModel):
+    """Arguments for getting user's quota and usage information."""
+    include_details: bool = Field(
+        default=True, 
+        description="Whether to include detailed usage statistics and reset date information"
+    )
+```
+
 ### Step 2: Implement Business Logic
 
 ```python
@@ -282,6 +304,48 @@ async def new_tool_impl(ctx: RunContextWrapper, args: str) -> str:
         return f"Successfully processed: {result.summary}"
     except Exception as e:
         return f"Error processing request: {e}"
+```
+
+**Real Example - User Quota Implementation**:
+```python
+async def get_user_quota_impl(ctx: RunContextWrapper, args: str) -> str:
+    """Implementation of the get_user_quota function."""
+    
+    # Context validation
+    quota_service = get_quota_service()
+    rate_limit_service = get_rate_limit_service()
+    current_user_id = get_current_user_id()
+    
+    if not quota_service or not rate_limit_service or not current_user_id:
+        return "Error: Agent context not properly initialized for quota information"
+    
+    # Argument parsing
+    try:
+        parsed = GetUserQuotaArgs.model_validate_json(args)
+    except ValueError as e:
+        return f"Error: Invalid arguments '{args}': {e}"
+    
+    # Business logic
+    try:
+        usage_stats = await rate_limit_service.get_user_usage_stats(
+            user_id=current_user_id, quota_service=quota_service
+        )
+        
+        if parsed.include_details:
+            # Return detailed quota information with formatting
+            percentage_used = (usage_stats.usage_count / usage_stats.monthly_limit) * 100
+            result = (
+                f"📊 **Your Agent Usage Quota**\n\n"
+                f"**Used:** {usage_stats.usage_count}/{usage_stats.monthly_limit} "
+                f"requests ({percentage_used:.1f}%)\n"
+                f"**Remaining:** {usage_stats.remaining_quota} requests\n"
+            )
+            return result
+        else:
+            return f"You have {usage_stats.remaining_quota} requests remaining."
+            
+    except Exception as e:
+        return f"Error retrieving quota information: {e!s}"
 ```
 
 ### Step 3: Register Tool Definition

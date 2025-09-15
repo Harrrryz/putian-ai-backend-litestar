@@ -8,6 +8,7 @@ from .todo import Todo
 from .todo_tag import TodoTag
 from .user import User
 from .user_role import UserRole
+from .user_usage_quota import UserUsageQuota
 
 __all__ = (
     "AgentSession",
@@ -21,4 +22,5 @@ __all__ = (
     "User",
     "UserOauthAccount",
     "UserRole",
+    "UserUsageQuota",
 )

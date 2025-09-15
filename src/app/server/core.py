@@ -64,6 +64,7 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
         from app.domain.accounts.services import RoleService, UserService
         from app.domain.agent_sessions.controllers import AgentSessionController, SessionMessageController
         from app.domain.agent_sessions.services import AgentSessionService, SessionMessageService
+        from app.domain.quota.services import UserUsageQuotaService
         from app.domain.system.controllers import SystemController
         from app.domain.todo.controllers import TodoController
         from app.domain.todo.services import TagService, TodoService
@@ -129,6 +130,7 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
                 "TodoService": TodoService,
                 "TagService": TagService,
                 "TodoAgentService": TodoAgentService,
+                "UserUsageQuotaService": UserUsageQuotaService,
             },
         )
         # exception handling
