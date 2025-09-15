@@ -20,6 +20,7 @@ from .argument_models import (
     DeleteTodoArgs,
     GetTodoListArgs,
     GetUserDatetimeArgs,
+    GetUserQuotaArgs,
     ScheduleTodoArgs,
     UpdateTodoArgs,
 )
@@ -29,6 +30,7 @@ from .tool_implementations import (
     create_todo_impl,
     delete_todo_impl,
     get_todo_list_impl,
+    get_user_quota_impl,
     schedule_todo_impl,
     update_todo_impl,
 )
@@ -104,8 +106,16 @@ def get_tool_definitions() -> Sequence[FunctionTool]:
         on_invoke_tool=get_user_datetime_impl,
     )
 
+    get_user_quota_tool = FunctionTool(
+        name="get_user_quota",
+        description="Get the user's current agent usage quota information including used requests, remaining quota, and reset date.",
+        params_json_schema=GetUserQuotaArgs.model_json_schema(),
+        on_invoke_tool=get_user_quota_impl,
+    )
+
     return [
         get_user_datetime_tool,  # Universal tool should be first
+        get_user_quota_tool,  # Quota information tool
         create_todo_tool,
         delete_todo_tool,
         update_todo_tool,
