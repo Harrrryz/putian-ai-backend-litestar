@@ -7,7 +7,9 @@ into HTTP exceptions.
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from advanced_alchemy.exceptions import IntegrityError
 from litestar.exceptions import (
@@ -33,6 +35,7 @@ __all__ = (
     "ApplicationError",
     "AuthorizationError",
     "HealthCheckConfigurationError",
+    "RateLimitExceededException",
     "after_exception_hook_handler",
 )
 
@@ -84,6 +87,40 @@ class AuthorizationError(ApplicationClientError):
 
 class HealthCheckConfigurationError(ApplicationError):
     """An error occurred while registering an health check."""
+
+
+class RateLimitExceededException(ApplicationClientError):
+    """Rate limit exceeded for agent requests."""
+
+    def __init__(
+        self,
+        user_id: UUID,
+        current_usage: int,
+        monthly_limit: int,
+        reset_date: datetime,
+        detail: str = "",
+    ) -> None:
+        """Initialize RateLimitExceededException.
+
+        Args:
+            user_id: ID of the user who exceeded the rate limit
+            current_usage: Current number of requests used this month
+            monthly_limit: Maximum number of requests allowed per month
+            reset_date: When the quota resets (first day of next month)
+            detail: Additional detail message
+        """
+        self.user_id = user_id
+        self.current_usage = current_usage
+        self.monthly_limit = monthly_limit
+        self.reset_date = reset_date
+        
+        if not detail:
+            detail = (
+                f"Rate limit exceeded. Used {current_usage}/{monthly_limit} "
+                f"requests this month. Quota resets on {reset_date.strftime('%Y-%m-%d')}."
+            )
+        
+        super().__init__(detail=detail)
 
 
 class _HTTPConflictException(HTTPException):
