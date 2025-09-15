@@ -19,7 +19,11 @@ from app.domain.agent_sessions.schemas import (
     SessionConversationResponse,
 )
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
-from app.domain.todo_agents.deps import provide_todo_agent_service
+from app.domain.todo_agents.deps import (
+    provide_rate_limit_service,
+    provide_todo_agent_service,
+    provide_user_usage_quota_service,
+)
 from app.domain.todo_agents.tools.system_instructions import TODO_SYSTEM_INSTRUCTIONS
 from app.lib.deps import create_filter_dependencies
 
@@ -29,6 +33,7 @@ if TYPE_CHECKING:
 
     from app.db import models as m
     from app.domain.agent_sessions.services import AgentSessionService, SessionMessageService
+    from app.domain.quota.services import UserUsageQuotaService
     from app.domain.todo_agents.services import TodoAgentService
 
 
@@ -41,6 +46,8 @@ class AgentSessionController(Controller):
         "todo_service": Provide(provide_todo_service),
         "tag_service": Provide(provide_tag_service),
         "agent_session_service": Provide(provide_agent_session_service),
+        "rate_limit_service": Provide(provide_rate_limit_service),
+        "quota_service": Provide(provide_user_usage_quota_service),
         "todo_agent_service": Provide(provide_todo_agent_service),
     } | create_filter_dependencies(
         {

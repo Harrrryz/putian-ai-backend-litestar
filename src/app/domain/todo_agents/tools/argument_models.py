@@ -11,6 +11,7 @@ __all__ = [
     "DeleteTodoArgs",
     "GetTodoListArgs",
     "GetUserDatetimeArgs",
+    "GetUserQuotaArgs",
     "ScheduleConflictResolution",
     "ScheduleTodoArgs",
     "SearchTodoArgs",
@@ -137,6 +138,13 @@ class GetUserDatetimeArgs(BaseModel):
     """Arguments for getting user's current date and time information."""
     timezone: str | None = Field(
         default=None, description="The user's timezone (e.g., 'America/New_York', 'Europe/London', 'Asia/Shanghai'). Defaults to UTC if not specified."
+    )
+
+
+class GetUserQuotaArgs(BaseModel):
+    """Arguments for getting user's quota and usage information."""
+    include_details: bool = Field(
+        default=True, description="Whether to include detailed usage statistics and reset date information"
     )
 
 

@@ -9,9 +9,11 @@ from uuid import UUID
 from agents import Runner, SQLiteSession
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
+    from app.domain.quota.services import UserUsageQuotaService
     from app.domain.todo.services import TagService, TodoService
+    from app.lib.rate_limit_service import RateLimitService
+
+from app.lib.exceptions import RateLimitExceededException
 
 from .tools.agent_factory import get_todo_agent
 from .tools.tool_context import set_agent_context
@@ -35,6 +37,8 @@ class TodoAgentService:
         self,
         todo_service: "TodoService",
         tag_service: "TagService",
+        rate_limit_service: "RateLimitService",
+        quota_service: "UserUsageQuotaService",
         session_db_path: str = "conversations.db",
     ) -> None:
         """Initialize the service with required dependencies.
@@ -42,10 +46,14 @@ class TodoAgentService:
         Args:
             todo_service: Service for todo operations
             tag_service: Service for tag operations
+            rate_limit_service: Service for rate limiting
+            quota_service: Service for quota management
             session_db_path: Path to SQLite database for storing conversations
         """
         self.todo_service = todo_service
         self.tag_service = tag_service
+        self.rate_limit_service = rate_limit_service
+        self.quota_service = quota_service
         self.session_db_path = session_db_path
         self._sessions: dict[str, SQLiteSession] = {}
 
@@ -63,14 +71,29 @@ class TodoAgentService:
             session_id: Optional session ID. If None, a new unique session ID will be generated
 
         Returns:
-            The agent's response
+            The agent's response, or an error message if user has exceeded their monthly quota
         """
+        # Check rate limit before processing
+        try:
+            await self.rate_limit_service.check_and_increment_usage(
+                UUID(user_id), self.quota_service
+            )
+        except RateLimitExceededException as e:
+            # Return user-friendly message when usage quota is exceeded
+            return f"You have exceeded your monthly usage limit. {e.detail}"
+
         # Generate unique session ID if not provided
         if session_id is None:
             session_id = f"user_{user_id}_{uuid.uuid4().hex[:8]}"
 
         # Ensure tools have service context for this user
-        set_agent_context(self.todo_service, self.tag_service, UUID(user_id))
+        set_agent_context(
+            self.todo_service,
+            self.tag_service,
+            UUID(user_id),
+            quota_service=self.quota_service,
+            rate_limit_service=self.rate_limit_service,
+        )
 
         # Get or create SQLite session
         if session_id not in self._sessions:
@@ -150,6 +173,8 @@ class TodoAgentService:
 def create_todo_agent_service(
     todo_service: "TodoService",
     tag_service: "TagService",
+    rate_limit_service: "RateLimitService",
+    quota_service: "UserUsageQuotaService",
     session_db_path: str = "conversations.db",
 ) -> TodoAgentService:
     """Factory function to create TodoAgentService with proper dependencies.
@@ -157,6 +182,8 @@ def create_todo_agent_service(
     Args:
         todo_service: Service for todo operations
         tag_service: Service for tag operations
+        rate_limit_service: Service for rate limiting
+        quota_service: Service for quota management
         session_db_path: Path to SQLite database for storing conversations
 
     Returns:
@@ -165,5 +192,7 @@ def create_todo_agent_service(
     return TodoAgentService(
         todo_service=todo_service,
         tag_service=tag_service,
+        rate_limit_service=rate_limit_service,
+        quota_service=quota_service,
         session_db_path=session_db_path,
     )
