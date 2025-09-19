@@ -18,7 +18,8 @@ if TYPE_CHECKING:
     from litestar.security.jwt import Token
 
 
-__all__ = ("auth", "current_user_from_token", "requires_active_user", "requires_superuser", "requires_verified_user")
+__all__ = ("auth", "current_user_from_token", "requires_active_user",
+           "requires_superuser", "requires_verified_user")
 
 
 settings = get_settings()
@@ -90,11 +91,11 @@ async def current_user_from_token(token: Token, connection: ASGIConnection[Any, 
 
 
     Returns:
-        User: User record mapped to the JWT identifier
+        User: User record mapped to the JWT identifier if user exists, is active, and is verified
     """
     service = await anext(provide_users_service(alchemy.provide_session(connection.app.state, connection.scope)))
     user = await service.get_one_or_none(email=token.sub)
-    return user if user and user.is_active else None
+    return user if user and user.is_active and user.is_verified else None
 
 
 auth = OAuth2PasswordBearerAuth[m.User](
@@ -105,6 +106,8 @@ auth = OAuth2PasswordBearerAuth[m.User](
         constants.HEALTH_ENDPOINT,
         urls.ACCOUNT_LOGIN,
         urls.ACCOUNT_REGISTER,
+        urls.ACCOUNT_VERIFY_EMAIL,
+        urls.ACCOUNT_RESEND_VERIFICATION,
         "^/schema",
         "^/public/",
     ],
