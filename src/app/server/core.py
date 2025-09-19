@@ -62,6 +62,7 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
         from app.domain.accounts.deps import provide_user
         from app.domain.accounts.guards import auth as jwt_auth
         from app.domain.accounts.services import RoleService, UserService
+        from app.domain.accounts.services_email_verification import EmailVerificationService
         from app.domain.agent_sessions.controllers import AgentSessionController, SessionMessageController
         from app.domain.agent_sessions.services import AgentSessionService, SessionMessageService
         from app.domain.quota.services import UserUsageQuotaService
@@ -125,6 +126,7 @@ class ApplicationCore(InitPluginProtocol, CLIPluginProtocol):
                 "UserService": UserService,
                 "RoleService": RoleService,
                 "UserRoleService": UserRoleService,
+                "EmailVerificationService": EmailVerificationService,
                 "AgentSessionService": AgentSessionService,
                 "SessionMessageService": SessionMessageService,
                 "TodoService": TodoService,
