@@ -1,6 +1,8 @@
 ACCOUNT_LOGIN = "/api/access/login"
 ACCOUNT_LOGOUT = "/api/access/logout"
 ACCOUNT_REGISTER = "/api/access/signup"
+ACCOUNT_VERIFY_EMAIL = "/api/access/verify-email"
+ACCOUNT_RESEND_VERIFICATION = "/api/access/resend-verification"
 ACCOUNT_PROFILE = "/api/me"
 ACCOUNT_LIST = "/api/users"
 ACCOUNT_DELETE = "/api/users/{user_id:uuid}"

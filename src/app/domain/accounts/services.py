@@ -19,8 +19,10 @@ from advanced_alchemy.service import (
 from litestar.exceptions import PermissionDeniedException
 
 from app.config import constants
+from app.config.app import settings
 from app.db import models as m
 from app.lib import crypt
+from app.lib.email import send_verification_email, send_welcome_email
 
 
 class UserService(SQLAlchemyAsyncRepositoryService[m.User]):
@@ -59,6 +61,9 @@ class UserService(SQLAlchemyAsyncRepositoryService[m.User]):
         if not db_obj.is_active:
             msg = "User account is inactive"
             raise PermissionDeniedException(detail=msg)
+        if not db_obj.is_verified:
+            msg = "User account is not verified. Please check your email for verification instructions."
+            raise PermissionDeniedException(detail=msg)
         return db_obj
 
     async def update_password(self, data: dict[str, Any], db_obj: m.User) -> None:
@@ -71,6 +76,9 @@ class UserService(SQLAlchemyAsyncRepositoryService[m.User]):
             raise PermissionDeniedException(detail=msg)
         if not db_obj.is_active:
             msg = "User account is not active"
+            raise PermissionDeniedException(detail=msg)
+        if not db_obj.is_verified:
+            msg = "User account is not verified. Please verify your email first."
             raise PermissionDeniedException(detail=msg)
         db_obj.hashed_password = await crypt.get_password_hash(data["new_password"])
         await self.repository.update(db_obj)
@@ -105,8 +113,83 @@ class UserService(SQLAlchemyAsyncRepositoryService[m.User]):
     async def _populate_with_role(self, data: ModelDictT[m.User]) -> ModelDictT[m.User]:
         if is_dict(data) and (role_id := data.pop("role_id", None)) is not None:
             data = await self.to_model(data)
-            data.roles.append(m.UserRole(role_id=role_id, assigned_at=datetime.now(UTC)))
+            data.roles.append(m.UserRole(
+                role_id=role_id, assigned_at=datetime.now(UTC)))
         return data
+
+    async def send_verification_email(
+        self,
+        user: m.User,
+        verification_token: str,
+        base_url: str = "http://localhost:8081"
+    ) -> bool:
+        """Send verification email to user.
+
+        Args:
+            user: The user to send verification email to
+            verification_token: The verification token
+            base_url: Base URL for verification link
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        return await send_verification_email(
+            smtp_settings=settings.smtp,
+            to_email=user.email,
+            user_name=user.name,
+            verification_token=verification_token,
+            base_url=base_url,
+        )
+
+    async def send_welcome_email(
+        self,
+        user: m.User
+    ) -> bool:
+        """Send welcome email to user after verification.
+
+        Args:
+            user: The user to send welcome email to
+
+        Returns:
+            True if email was sent successfully, False otherwise
+        """
+        return await send_welcome_email(
+            smtp_settings=settings.smtp,
+            to_email=user.email,
+            user_name=user.name,
+        )
+
+    async def verify_user_email(self, user_id: UUID) -> m.User:
+        """Mark user as verified and update verification timestamp.
+
+        Args:
+            user_id: ID of the user to verify
+
+        Returns:
+            The updated user
+        """
+        user = await self.get_one(id=user_id)
+
+        # Update user verification status
+        await self.update(
+            item_id=user_id,
+            data={
+                "is_verified": True,
+                "verified_at": datetime.now(UTC).date(),
+            }
+        )
+
+        # Get updated user
+        verified_user = await self.get_one(id=user_id)
+
+        # Send welcome email (optional, don't fail if it fails)
+        try:
+            await self.send_welcome_email(verified_user)
+        except Exception:
+            # Log error but don't fail the verification process
+            pass
+
+        return verified_user
 
 
 class RoleService(SQLAlchemyAsyncRepositoryService[m.Role]):

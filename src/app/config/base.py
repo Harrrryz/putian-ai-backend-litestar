@@ -391,6 +391,27 @@ class AISettings:
 
 
 @dataclass
+class SMTPSettings:
+    """SMTP Email configurations."""
+
+    HOST: str = field(default_factory=get_env(
+        "SMTP_HOST", "smtp.maileroo.com"))
+    """SMTP server hostname"""
+    PORT: int = field(default_factory=get_env("SMTP_PORT", 587))
+    """SMTP server port (465 for SSL, 587 for STARTTLS, 2525 for plaintext)"""
+    USERNAME: str | None = field(
+        default_factory=get_env("SMTP_USERNAME", None))
+    """SMTP authentication username"""
+    PASSWORD: str | None = field(
+        default_factory=get_env("SMTP_PASSWORD", None))
+    """SMTP authentication password"""
+    USE_TLS: bool = field(default_factory=get_env("SMTP_USE_TLS", True))
+    """Use STARTTLS encryption"""
+    USE_SSL: bool = field(default_factory=get_env("SMTP_USE_SSL", False))
+    """Use SSL/TLS encryption (set to True for port 465)"""
+
+
+@dataclass
 class Settings:
     app: AppSettings = field(default_factory=AppSettings)
     db: DatabaseSettings = field(default_factory=DatabaseSettings)
@@ -398,6 +419,7 @@ class Settings:
     log: LogSettings = field(default_factory=LogSettings)
     s3: S3Settings = field(default_factory=S3Settings)
     ai: AISettings = field(default_factory=AISettings)
+    smtp: SMTPSettings = field(default_factory=SMTPSettings)
 
     @classmethod
     def from_env(cls, dotenv_filename: str = ".env") -> Settings:

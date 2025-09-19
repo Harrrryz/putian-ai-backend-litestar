@@ -8,19 +8,31 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.db import models as m
 from app.domain.accounts.services import UserService
+from app.domain.accounts.services_email_verification import EmailVerificationService
 from app.lib.deps import create_service_provider
 
 if TYPE_CHECKING:
     from litestar import Request
 
-# create a hard reference to this since it's used oven
+# create a hard reference to this since it's used often
 provide_users_service = create_service_provider(
     UserService,
     load=[
-        selectinload(m.User.roles).options(joinedload(m.UserRole.role, innerjoin=True)),
+        selectinload(m.User.roles).options(
+            joinedload(m.UserRole.role, innerjoin=True)),
         selectinload(m.User.oauth_accounts),
     ],
-    error_messages={"duplicate_key": "This user already exists.", "integrity": "User operation failed."},
+    error_messages={"duplicate_key": "This user already exists.",
+                    "integrity": "User operation failed."},
+)
+
+provide_email_verification_service = create_service_provider(
+    EmailVerificationService,
+    load=[
+        joinedload(m.EmailVerificationToken.user, innerjoin=True),
+    ],
+    error_messages={"duplicate_key": "Verification token already exists.",
+                    "integrity": "Email verification operation failed."},
 )
 
 
