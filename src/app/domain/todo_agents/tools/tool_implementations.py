@@ -48,27 +48,37 @@ __all__ = [
 
 
 def _preprocess_args(args: str) -> str:
-    """Normalize double-encoded JSON arrays coming from some LLM responses."""
+    """Preprocess tool arguments to handle double-encoded JSON arrays.
+
+    Some LLMs may send array fields as stringified JSON within the JSON string,
+    e.g., tags: '["study"]' instead of tags: ["study"].
+    This function parses the JSON and re-serializes it to ensure proper structure.
+
+    Args:
+        args: JSON string containing tool arguments
+
+    Returns:
+        Preprocessed JSON string with proper array encoding
+    """
     try:
         data = json.loads(args)
-    except (json.JSONDecodeError, TypeError, ValueError):
+
+        # Check if any field is a string that looks like a JSON array
+        for key, value in data.items():
+            if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
+                try:
+                    # Try to parse it as JSON
+                    parsed_array = json.loads(value)
+                    if isinstance(parsed_array, list):
+                        data[key] = parsed_array
+                except (json.JSONDecodeError, ValueError):
+                    # If it fails to parse, leave it as is
+                    pass
+
+        return json.dumps(data)
+    except (json.JSONDecodeError, ValueError):
+        # If we can't parse the args, return them as-is
         return args
-
-    if not isinstance(data, dict):
-        return args
-
-    updated = False
-    for key, value in list(data.items()):
-        if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
-            try:
-                parsed_value = json.loads(value)
-            except (json.JSONDecodeError, TypeError, ValueError):
-                continue
-            if isinstance(parsed_value, list):
-                data[key] = parsed_value
-                updated = True
-
-    return json.dumps(data) if updated else args
 
 
 async def delete_todo_impl(ctx: RunContextWrapper, args: str) -> str:
@@ -109,6 +119,11 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     if not todo_service or not tag_service or not current_user_id:
         return "Error: Agent context not properly initialized"
 
+    session = getattr(todo_service.repository, "session", None)
+    if session is None:
+        return "Error: Database session not available"
+
+    # Preprocess args to handle double-encoded arrays
     args = _preprocess_args(args)
     parsed = CreateTodoArgs.model_validate_json(args)
     user_tz = ZoneInfo(parsed.timezone) if parsed.timezone else ZoneInfo("UTC")
@@ -168,12 +183,32 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     if alarm_time_obj is not None:
         todo_data["alarm_time"] = alarm_time_obj
 
+    associated_tags: list[str] = []
     try:
         todo = await todo_service.create(todo_data)
+        await session.flush()
+
+        if parsed.tags:
+            seen_tag_ids: set[UUID] = set()
+            for raw_tag in parsed.tags:
+                tag_name = raw_tag.strip()
+                if not tag_name:
+                    continue
+                tag_obj = await tag_service.get_or_create_tag(current_user_id, tag_name)
+                if tag_obj.id in seen_tag_ids:
+                    continue
+                seen_tag_ids.add(tag_obj.id)
+                todo.todo_tags.append(
+                    m.TodoTag(todo_id=todo.id, tag_id=tag_obj.id))
+                associated_tags.append(tag_obj.name)
+
+        await session.commit()
+        await session.refresh(todo)
     except Exception as e:
+        await session.rollback()
         return f"Error creating todo: {e!s}"
 
-    tag_info = f" (tags: {', '.join(parsed.tags)})" if parsed.tags else ""
+    tag_info = f" (tags: {', '.join(associated_tags)})" if associated_tags else ""
     start_str = start_time_obj.astimezone(user_tz).strftime("%Y-%m-%d %H:%M")
     end_str = end_time_obj.astimezone(user_tz).strftime("%Y-%m-%d %H:%M")
     return f"Successfully created todo '{todo.item}' (ID: {todo.id}) scheduled from {start_str} to {end_str}{tag_info}"
@@ -367,6 +402,7 @@ async def schedule_todo_impl(ctx: RunContextWrapper, args: str) -> str:
         return "Error: Agent context not properly initialized"
 
     try:
+        # Preprocess args to handle double-encoded arrays
         args = _preprocess_args(args)
         parsed = ScheduleTodoArgs.model_validate_json(args)
     except ValueError as e:
@@ -382,8 +418,14 @@ async def schedule_todo_impl(ctx: RunContextWrapper, args: str) -> str:
         if not suggested:
             return _handle_no_available_slot(target_date, parsed, existing, user_tz)
 
-        todo = await _create_scheduled_todo(parsed, suggested, todo_service, current_user_id)
-        return _format_scheduling_success(todo, suggested, user_tz)
+        todo, associated_tags = await _create_scheduled_todo(
+            parsed,
+            suggested,
+            todo_service,
+            tag_service,
+            current_user_id,
+        )
+        return _format_scheduling_success(todo, suggested, user_tz, associated_tags)
     except (ValueError, ZoneInfoNotFoundError) as e:
         return f"Error: {e!s}"
     except Exception as e:
@@ -692,8 +734,19 @@ def _handle_no_available_slot(target_date: datetime, parsed: ScheduleTodoArgs, e
     return f"⚠️ No suitable time slots found for '{parsed.item}' on {target_date.strftime('%Y-%m-%d')}. The day appears to be fully booked."
 
 
-async def _create_scheduled_todo(parsed: ScheduleTodoArgs, suggested_time: datetime, todo_service, current_user_id: UUID) -> Todo:
+async def _create_scheduled_todo(
+    parsed: ScheduleTodoArgs,
+    suggested_time: datetime,
+    todo_service,
+    tag_service,
+    current_user_id: UUID,
+) -> tuple[Todo, list[str]]:
     """Create a new todo with the suggested time."""
+    session = getattr(todo_service.repository, "session", None)
+    if session is None:
+        msg = "Database session not available"
+        raise RuntimeError(msg)
+
     try:
         importance_enum = Importance(parsed.importance.lower())
     except ValueError:
@@ -702,17 +755,17 @@ async def _create_scheduled_todo(parsed: ScheduleTodoArgs, suggested_time: datet
     duration_delta = timedelta(minutes=parsed.duration_minutes)
     end_time = suggested_time + duration_delta
 
-    # Double-check for time conflicts before creating
     conflicts = await todo_service.check_time_conflict(
-        current_user_id, suggested_time.astimezone(
-            UTC), end_time.astimezone(UTC)
+        current_user_id,
+        suggested_time.astimezone(UTC),
+        end_time.astimezone(UTC),
     )
     if conflicts:
         details = [f"'{c.item}'" for c in conflicts]
         msg = f"Time conflict detected with: {', '.join(details)}"
         raise RuntimeError(msg)
 
-    data = {
+    data: dict[str, object] = {
         "item": parsed.item,
         "description": parsed.description,
         "importance": importance_enum,
@@ -721,14 +774,58 @@ async def _create_scheduled_todo(parsed: ScheduleTodoArgs, suggested_time: datet
         "end_time": end_time.astimezone(UTC),
         "alarm_time": suggested_time.astimezone(UTC),
     }
-    return await todo_service.create(data)
+
+    associated_tags: list[str] = []
+    try:
+        todo = await todo_service.create(data)
+        await session.flush()
+
+        if parsed.tags:
+            seen_tag_ids = set()
+            for raw_tag in parsed.tags:
+                tag_name = raw_tag.strip()
+                if not tag_name:
+                    continue
+
+                tag_obj = await tag_service.get_or_create_tag(current_user_id, tag_name)
+                if tag_obj.id in seen_tag_ids:
+                    continue
+
+                seen_tag_ids.add(tag_obj.id)
+                todo.todo_tags.append(
+                    m.TodoTag(todo_id=todo.id, tag_id=tag_obj.id))
+                associated_tags.append(tag_obj.name)
+
+        await session.commit()
+        await session.refresh(todo)
+    except Exception:
+        await session.rollback()
+        raise
+
+    return todo, associated_tags
 
 
-def _format_scheduling_success(todo: Todo, suggested_time: datetime, user_tz: ZoneInfo) -> str:
+def _format_scheduling_success(
+    todo: Todo,
+    suggested_time: datetime,
+    user_tz: ZoneInfo,
+    associated_tags: list[str] | None = None,
+) -> str:
     """Format the success message for scheduling."""
-    ts = suggested_time.strftime(
-        "%Y-%m-%d %H:%M:%S") + (f" ({user_tz})" if str(user_tz) != "UTC" else "")
-    return f"✅ Successfully scheduled '{todo.item}' for {ts}\n\nThis time slot was chosen based on your existing schedule and preferences."
+    ts = suggested_time.strftime("%Y-%m-%d %H:%M:%S")
+    if str(user_tz) != "UTC":
+        ts += f" ({user_tz})"
+
+    tag_line = ""
+    if associated_tags:
+        tag_line = f"\n\nTags: {', '.join(associated_tags)}"
+
+    base_message = (
+        f"✅ Successfully scheduled '{todo.item}' for {ts}\n\n"
+        "This time slot was chosen based on your existing schedule and preferences."
+    )
+
+    return base_message + tag_line
 
 
 def _find_free_slot(target_date: datetime, start_hour: int, end_hour: int, duration_minutes: int, existing: list, user_tz: ZoneInfo) -> datetime | None:
