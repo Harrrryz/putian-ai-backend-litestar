@@ -1,8 +1,9 @@
+from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from agents import TResponseInputItem
+from pydantic import field_validator
 
 from app.config.base import get_settings
 from app.db.models.importance import Importance
@@ -24,6 +25,26 @@ class TodoModel(PydanticBaseModel):
     importance: Importance
     user_id: UUID
     tags: list[str] | None = None
+
+    @field_validator("tags", mode="before")
+    @classmethod
+    def _extract_tag_names(cls, value: Any) -> list[str] | None:
+        """Ensure tags validate as list of strings when provided by ORM proxy."""
+        if value is None:
+            return None
+
+        if isinstance(value, str):
+            return [value]
+
+        if not isinstance(value, Iterable):
+            return value
+
+        extracted: list[str] = []
+        for item in value:
+            name = getattr(item, "name", None)
+            extracted.append(name if isinstance(name, str) else str(item))
+
+        return extracted
 
 
 class TodoCreate(PydanticBaseModel):
