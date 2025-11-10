@@ -2,6 +2,7 @@ from .agent_session import AgentSession
 from .email_verification_token import EmailVerificationToken
 from .importance import Importance
 from .oauth_account import UserOauthAccount
+from .password_reset_token import PasswordResetToken
 from .role import Role
 from .session_message import MessageRole, SessionMessage
 from .tag import Tag
@@ -16,6 +17,7 @@ __all__ = (
     "EmailVerificationToken",
     "Importance",
     "MessageRole",
+    "PasswordResetToken",
     "Role",
     "SessionMessage",
     "Tag",

@@ -7,6 +7,7 @@ and tag services to perform CRUD operations and scheduling logic.
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -44,6 +45,30 @@ __all__ = [
     "schedule_todo_impl",
     "update_todo_impl",
 ]
+
+
+def _preprocess_args(args: str) -> str:
+    """Normalize double-encoded JSON arrays coming from some LLM responses."""
+    try:
+        data = json.loads(args)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return args
+
+    if not isinstance(data, dict):
+        return args
+
+    updated = False
+    for key, value in list(data.items()):
+        if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
+            try:
+                parsed_value = json.loads(value)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+            if isinstance(parsed_value, list):
+                data[key] = parsed_value
+                updated = True
+
+    return json.dumps(data) if updated else args
 
 
 async def delete_todo_impl(ctx: RunContextWrapper, args: str) -> str:
@@ -84,6 +109,7 @@ async def create_todo_impl(ctx: RunContextWrapper, args: str) -> str:
     if not todo_service or not tag_service or not current_user_id:
         return "Error: Agent context not properly initialized"
 
+    args = _preprocess_args(args)
     parsed = CreateTodoArgs.model_validate_json(args)
     user_tz = ZoneInfo(parsed.timezone) if parsed.timezone else ZoneInfo("UTC")
 
@@ -341,6 +367,7 @@ async def schedule_todo_impl(ctx: RunContextWrapper, args: str) -> str:
         return "Error: Agent context not properly initialized"
 
     try:
+        args = _preprocess_args(args)
         parsed = ScheduleTodoArgs.model_validate_json(args)
     except ValueError as e:
         return f"Error: Invalid arguments '{args}': {e}"
