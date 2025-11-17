@@ -1,3 +1,4 @@
+from .ace_playbook import AcePlaybookBullet, AcePlaybookRevision, AcePlaybookSection
 from .agent_session import AgentSession
 from .email_verification_token import EmailVerificationToken
 from .importance import Importance
@@ -13,6 +14,9 @@ from .user_role import UserRole
 from .user_usage_quota import UserUsageQuota
 
 __all__ = (
+    "AcePlaybookBullet",
+    "AcePlaybookRevision",
+    "AcePlaybookSection",
     "AgentSession",
     "EmailVerificationToken",
     "Importance",
