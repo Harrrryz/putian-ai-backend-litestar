@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -41,3 +42,35 @@ class PlaybookSnapshotRead(BaseModel):
 
     sections: list[PlaybookSectionRead]
     bullets: dict[str, PlaybookBulletRead]
+
+
+class PlaybookRevisionRead(BaseModel):
+    """Serialized representation of a revision entry."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    id: UUID
+    description: str | None = None
+    applied_by: str | None = None
+    operations: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict, alias="metadata_")
+    created_at: datetime
+
+
+class PlaybookDeltaApplyRequest(BaseModel):
+    """Payload for submitting curator deltas manually."""
+
+    operations: list["DeltaOperation"]
+    description: str | None = None
+    applied_by: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class PlaybookDeltaApplyResponse(BaseModel):
+    """Wrapper returned after applying playbook deltas."""
+
+    result: "PlaybookDeltaResult"
+
+
+from .delta import DeltaOperation  # noqa: E402  # circular type reference
+from .playbook import PlaybookDeltaResult  # noqa: E402
