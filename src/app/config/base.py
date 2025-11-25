@@ -388,6 +388,14 @@ class AISettings:
     GLM_BASE_URL: str | None = field(
         default_factory=get_env("GLM_BASE_URL", None))
     """GLM Base URL for API endpoints"""
+    ENABLE_ACE: bool = field(default_factory=get_env("AI_ENABLE_ACE", False))
+    """Feature flag toggling ACE orchestration for todo agents."""
+    ACE_MODEL: str = field(
+        default_factory=get_env("AI_ACE_MODEL", "openai/gpt-4o-mini"))
+    """Default model alias used by ACE-specific LLM prompts."""
+    ACE_MAX_STRATEGIES: int = field(
+        default_factory=get_env("AI_ACE_MAX_STRATEGIES", 5))
+    """Maximum number of strategies injected into prompts per run."""
 
 
 @dataclass
