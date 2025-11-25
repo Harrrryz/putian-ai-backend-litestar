@@ -7,7 +7,9 @@ from datetime import datetime
 from typing import Any, Iterable, Sequence
 
 import structlog
+from pydantic import BaseModel, Field
 from sqlalchemy import Select, select
+
 from app.db import models as m
 
 from .delta import DeltaAction, DeltaOperation
@@ -54,15 +56,14 @@ class PlaybookSnapshot:
     bullets: dict[str, PlaybookBullet] = field(default_factory=dict)
 
 
-@dataclass(slots=True)
-class PlaybookDeltaResult:
+class PlaybookDeltaResult(BaseModel):
     """Summary of mutations applied to the playbook."""
 
-    added: list[str] = field(default_factory=list)
-    updated: list[str] = field(default_factory=list)
-    tagged: list[str] = field(default_factory=list)
-    removed: list[str] = field(default_factory=list)
-    skipped: list[str] = field(default_factory=list)
+    added: list[str] = Field(default_factory=list)
+    updated: list[str] = Field(default_factory=list)
+    tagged: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
     revision_id: str | None = None
 
     def has_changes(self) -> bool:
