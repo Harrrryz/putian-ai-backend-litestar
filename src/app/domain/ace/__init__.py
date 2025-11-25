@@ -1,7 +1,8 @@
 """ACE domain package."""
 
-from . import adaptation, delta, deps, llm, playbook, prompts, schemas, services
+from . import adaptation, controllers, delta, deps, llm, playbook, prompts, schemas, services
 from .delta import DeltaAction, DeltaOperation
+from .orchestrator import AceContextBlock, AceOrchestrator
 from .playbook import AcePlaybookService, PlaybookDeltaResult, PlaybookSnapshot
 from .services import (
     AcePlaybookBulletService,
@@ -10,6 +11,8 @@ from .services import (
 )
 
 __all__ = (
+    "AceContextBlock",
+    "AceOrchestrator",
     "AcePlaybookBulletService",
     "AcePlaybookRevisionService",
     "AcePlaybookSectionService",
@@ -19,6 +22,7 @@ __all__ = (
     "PlaybookDeltaResult",
     "PlaybookSnapshot",
     "adaptation",
+    "controllers",
     "delta",
     "deps",
     "llm",
