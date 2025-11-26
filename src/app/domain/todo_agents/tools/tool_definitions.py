@@ -24,31 +24,35 @@ from .argument_models import (
     ScheduleTodoArgs,
     UpdateTodoArgs,
 )
-from .tool_implementations import (
-    analyze_schedule_impl,
-    batch_update_schedule_impl,
+from .crud_tools import (
     create_todo_impl,
     delete_todo_impl,
-    get_todo_list_impl,
-    get_user_quota_impl,
-    schedule_todo_impl,
     update_todo_impl,
 )
+from .scheduling_tools import (
+    analyze_schedule_impl,
+    batch_update_schedule_impl,
+    get_todo_list_impl,
+    schedule_todo_impl,
+)
+from .utility_tools import get_user_quota_impl
 from .universal_tools import get_user_datetime_impl
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from agents import FunctionTool
+from agents import FunctionTool
 
 __all__ = [
+    "get_crud_tools",
+    "get_scheduling_tools",
     "get_tool_definitions",
+    "get_utility_tools",
 ]
 
 
-def get_tool_definitions() -> Sequence[FunctionTool]:
-    """Return the list of FunctionTool definitions for the todo agent."""
-    from agents import FunctionTool
+def _create_tools() -> dict[str, FunctionTool]:
+    """Create all tool instances."""
 
     create_todo_tool = FunctionTool(
         name="create_todo",
@@ -113,14 +117,61 @@ def get_tool_definitions() -> Sequence[FunctionTool]:
         on_invoke_tool=get_user_quota_impl,
     )
 
+    return {
+        "create_todo": create_todo_tool,
+        "delete_todo": delete_todo_tool,
+        "update_todo": update_todo_tool,
+        "get_todo_list": get_todo_list_tool,
+        "analyze_schedule": analyze_schedule_tool,
+        "schedule_todo": schedule_todo_tool,
+        "batch_update_schedule": batch_update_schedule_tool,
+        "get_user_datetime": get_user_datetime_tool,
+        "get_user_quota": get_user_quota_tool,
+    }
+
+
+def get_crud_tools() -> Sequence[FunctionTool]:
+    """Return tools for CRUD operations."""
+    tools = _create_tools()
     return [
-        get_user_datetime_tool,  # Universal tool should be first
-        get_user_quota_tool,  # Quota information tool
-        create_todo_tool,
-        delete_todo_tool,
-        update_todo_tool,
-        get_todo_list_tool,
-        analyze_schedule_tool,
-        schedule_todo_tool,
-        batch_update_schedule_tool,
+        tools["create_todo"],
+        tools["update_todo"],
+        tools["delete_todo"],
+        tools["get_todo_list"],
+    ]
+
+
+def get_scheduling_tools() -> Sequence[FunctionTool]:
+    """Return tools for scheduling operations."""
+    tools = _create_tools()
+    return [
+        tools["analyze_schedule"],
+        tools["schedule_todo"],
+        tools["batch_update_schedule"],
+        tools["get_todo_list"],  # Scheduling often needs to see the list
+    ]
+
+
+def get_utility_tools() -> Sequence[FunctionTool]:
+    """Return utility tools."""
+    tools = _create_tools()
+    return [
+        tools["get_user_datetime"],
+        tools["get_user_quota"],
+    ]
+
+
+def get_tool_definitions() -> Sequence[FunctionTool]:
+    """Return the list of FunctionTool definitions for the todo agent."""
+    tools = _create_tools()
+    return [
+        tools["get_user_datetime"],  # Universal tool should be first
+        tools["get_user_quota"],  # Quota information tool
+        tools["create_todo"],
+        tools["delete_todo"],
+        tools["update_todo"],
+        tools["get_todo_list"],
+        tools["analyze_schedule"],
+        tools["schedule_todo"],
+        tools["batch_update_schedule"],
     ]

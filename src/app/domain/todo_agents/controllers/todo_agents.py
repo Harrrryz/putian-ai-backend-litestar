@@ -24,6 +24,7 @@ else:
     RateLimitService = import_module(
         "app.lib.rate_limit_service").RateLimitService
 
+from app.domain.ace.deps import provide_ace_playbook_service
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
 from app.domain.todo_agents import urls
 from app.domain.todo_agents.deps import (
@@ -55,6 +56,7 @@ class TodoAgentController(Controller):
         "tag_service": Provide(provide_tag_service),
         "rate_limit_service": Provide(provide_rate_limit_service),
         "quota_service": Provide(provide_user_usage_quota_service),
+        "ace_playbook_service": Provide(provide_ace_playbook_service),
         "todo_agent_service": Provide(provide_todo_agent_service),
     }
 

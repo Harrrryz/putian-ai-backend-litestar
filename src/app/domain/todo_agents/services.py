@@ -12,13 +12,17 @@ from openai.types.responses import ResponseTextDeltaEvent
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
+    from app.domain.ace.playbook import AcePlaybookService
     from app.domain.quota.services import UserUsageQuotaService
     from app.domain.todo.services import TagService, TodoService
     from app.lib.rate_limit_service import RateLimitService
 
+from app.config import get_settings
+from app.domain.ace.orchestrator import AceContextBlock, AceOrchestrator
 from app.lib.exceptions import RateLimitExceededException
 
 from .tools.agent_factory import get_todo_agent
+from .tools.system_instructions import TODO_SYSTEM_INSTRUCTIONS
 from .tools.tool_context import set_agent_context
 
 __all__ = (
@@ -43,6 +47,7 @@ class TodoAgentService:
         rate_limit_service: "RateLimitService",
         quota_service: "UserUsageQuotaService",
         session_db_path: str = "conversations.db",
+        ace_orchestrator: AceOrchestrator | None = None,
     ) -> None:
         """Initialize the service with required dependencies.
 
@@ -59,6 +64,8 @@ class TodoAgentService:
         self.quota_service = quota_service
         self.session_db_path = session_db_path
         self._sessions: dict[str, SQLiteSession] = {}
+        self._ace_orchestrator = ace_orchestrator
+        self._ace_session_context: dict[str, AceContextBlock] = {}
 
     async def chat_with_agent(
         self,
@@ -105,13 +112,17 @@ class TodoAgentService:
 
         session = self._sessions[session_id]
 
+        instructions = await self._prepare_agent_instructions(session_id)
+
         # Get the todo agent (with tools)
-        agent = get_todo_agent()
+        agent = get_todo_agent(instructions=instructions)
 
         # Run the agent with session - conversation history is automatically managed!
         result = await Runner.run(agent, message, session=session, max_turns=20)
 
-        return result.final_output
+        final_response = result.final_output
+        await self._finalize_ace_run(session_id, final_response)
+        return final_response
 
     async def stream_chat_with_agent(
         self,
@@ -165,8 +176,10 @@ class TodoAgentService:
 
         session = self._sessions[session_id]
 
+        instructions = await self._prepare_agent_instructions(session_id)
+
         # Get the todo agent (with tools)
-        agent = get_todo_agent()
+        agent = get_todo_agent(instructions=instructions)
 
         stream = Runner.run_streamed(
             agent,
@@ -217,7 +230,11 @@ class TodoAgentService:
                     "message": f"Agent streaming failed: {exc!s}",
                 },
             }
+            await self._finalize_ace_run(session_id, None, success=False)
             return
+
+        final_message = last_message or ("".join(last_message_chunks) if last_message_chunks else None)
+        await self._finalize_ace_run(session_id, final_message)
 
         history = await self.get_session_history(session_id=session_id, limit=history_limit)
         yield {
@@ -411,12 +428,53 @@ class TodoAgentService:
             session_id, self.session_db_path)
         return session_id
 
+    async def _prepare_agent_instructions(self, session_id: str) -> str:
+        """Build the instruction string, injecting ACE strategies when enabled."""
+        base = TODO_SYSTEM_INSTRUCTIONS
+        if not self._ace_orchestrator:
+            return base
+        try:
+            block = await self._ace_orchestrator.build_context_block()
+        except Exception:
+            return base
+        if not block:
+            return base
+        self._ace_session_context[session_id] = block
+        return self._ace_orchestrator.merge_instructions(base, block)
+
+    async def _finalize_ace_run(
+        self,
+        session_id: str,
+        final_message: str | None,
+        *,
+        success: bool = True,
+    ) -> None:
+        """Record ACE feedback after an agent run completes."""
+        if not self._ace_orchestrator:
+            return
+        block = self._ace_session_context.pop(session_id, None)
+        if block is None:
+            return
+        mentions = AceOrchestrator.extract_strategy_mentions(final_message or "")
+        bullet_ids = mentions or block.bullet_ids
+        if not bullet_ids:
+            return
+        try:
+            await self._ace_orchestrator.record_feedback(
+                bullet_ids,
+                success=success and bool(final_message),
+            )
+        except Exception:
+            # Do not impact user flows if ACE bookkeeping fails.
+            return
+
 
 def create_todo_agent_service(
     todo_service: "TodoService",
     tag_service: "TagService",
     rate_limit_service: "RateLimitService",
     quota_service: "UserUsageQuotaService",
+    ace_playbook_service: "AcePlaybookService | None" = None,
     session_db_path: str = "conversations.db",
 ) -> TodoAgentService:
     """Factory function to create TodoAgentService with proper dependencies.
@@ -431,10 +489,19 @@ def create_todo_agent_service(
     Returns:
         Configured TodoAgentService instance
     """
+    settings = get_settings()
+    ace_orchestrator = None
+    if settings.ai.ENABLE_ACE and ace_playbook_service is not None:
+        ace_orchestrator = AceOrchestrator(
+            playbook_service=ace_playbook_service,
+            max_strategies=settings.ai.ACE_MAX_STRATEGIES,
+        )
+
     return TodoAgentService(
         todo_service=todo_service,
         tag_service=tag_service,
         rate_limit_service=rate_limit_service,
         quota_service=quota_service,
         session_db_path=session_db_path,
+        ace_orchestrator=ace_orchestrator,
     )

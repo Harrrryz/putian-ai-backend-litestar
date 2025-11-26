@@ -9,7 +9,9 @@ if TYPE_CHECKING:
     from app.domain.todo.services import TagService, TodoService
     from app.domain.todo_agents.services import TodoAgentService
     from app.lib.rate_limit_service import RateLimitService
+    from app.domain.ace.playbook import AcePlaybookService
 
+from app.domain.ace.deps import provide_ace_playbook_service
 from app.domain.quota.deps import provide_user_usage_quota_service
 from app.domain.todo_agents.services import TodoAgentService, create_todo_agent_service
 from app.lib.rate_limit_service import RateLimitService
@@ -23,6 +25,7 @@ async def provide_todo_agent_service(
     tag_service: "TagService",
     rate_limit_service: "RateLimitService",
     quota_service: "UserUsageQuotaService",
+    ace_playbook_service: "AcePlaybookService | None",
 ) -> "TodoAgentService":
     """Dependency provider for TodoAgentService.
 
@@ -43,6 +46,7 @@ async def provide_todo_agent_service(
         tag_service=tag_service,
         rate_limit_service=rate_limit_service,
         quota_service=quota_service,
+        ace_playbook_service=ace_playbook_service,
     )
 
 

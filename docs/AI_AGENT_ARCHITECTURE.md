@@ -64,15 +64,12 @@ VOLCENGINE_BASE_URL: str | None = field(default_factory=get_env("VOLCENGINE_BASE
 
 ### Factory Pattern Implementation
 
-The agent factory follows a centralized creation pattern to ensure consistency:
+The agent factory follows a centralized creation pattern to ensure consistency. It now configures the agent as an orchestrator with access to specialized sub-agents.
 
 ```python
 # src/app/domain/todo_agents/tools/agent_factory.py
-def get_todo_agent() -> Agent:
+def get_todo_agent(*, instructions: str | None = None) -> Agent:
     """Create and return a configured todo agent with LiteLLM."""
-    from agents import Agent
-    from agents.extensions.models.litellm_model import LitellmModel
-
     settings = get_settings()
 
     model = LitellmModel(
@@ -81,11 +78,15 @@ def get_todo_agent() -> Agent:
         base_url=settings.ai.GLM_BASE_URL,
     )
 
-    tools = cast("list[Tool]", list(get_tool_definitions()))
+    # The main agent uses orchestration tools to delegate tasks
+    tools = [
+        *get_utility_tools(),
+        *get_orchestration_tools(),
+    ]
 
     return Agent(
         name="TodoAssistant",
-        instructions=TODO_SYSTEM_INSTRUCTIONS,
+        instructions=instructions or ORCHESTRATOR_INSTRUCTIONS,
         model=model,
         tools=tools,
     )
@@ -353,55 +354,43 @@ def set_agent_context(
 
 ## Multi-Agent Coordination Patterns
 
-### Current Implementation
+### Implemented Architecture: Hierarchical Orchestration
 
-The current system uses a single-agent architecture with the TodoAssistant. However, the architecture supports multi-agent expansion:
+The system implements a hierarchical "Agent as Tools" pattern where a main **Orchestrator Agent** delegates tasks to specialized sub-agents.
 
-### Agent Role Specialization
+For a detailed implementation guide, see [AGENT_AS_TOOLS_IMPLEMENTATION.md](AGENT_AS_TOOLS_IMPLEMENTATION.md).
+
+### Agent Roles
+
+1.  **Orchestrator (`TodoAssistant`)**:
+    *   **Role**: Interface with the user, understand intent, and delegate.
+    *   **Tools**: `consult_scheduler`, `consult_crud_agent`, `get_user_datetime`, `get_user_quota`.
+    *   **Instructions**: `ORCHESTRATOR_INSTRUCTIONS`.
+
+2.  **Scheduling Specialist (`SchedulingSpecialist`)**:
+    *   **Role**: Expert in time management and conflict resolution.
+    *   **Tools**: `analyze_schedule`, `schedule_todo`, `batch_update_schedule`, `get_todo_list`.
+
+3.  **CRUD Assistant (`TodoCRUDAssistant`)**:
+    *   **Role**: Expert in database operations.
+    *   **Tools**: `create_todo`, `update_todo`, `delete_todo`, `get_todo_list`.
+
+### Coordination Flow
 
 ```python
-# Potential multi-agent architecture
-SCHEDULING_AGENT = Agent(
-    name="ScheduleAssistant",
-    instructions="Specialized in scheduling and time management...",
-    model=model,
-    tools=scheduling_tools,
-)
-
-CRUD_AGENT = Agent(
-    name="TodoCRUDAssistant",
-    instructions="Specialized in todo CRUD operations...",
-    model=model,
-    tools=crud_tools,
-)
+# Orchestrator delegates to specialist
+async def consult_scheduler_impl(ctx: RunContextWrapper, args: str) -> str:
+    """Delegate a scheduling request to the Scheduling Specialist."""
+    # ... parse args ...
+    agent = get_scheduling_agent()
+    result = await Runner.run(agent, parsed.request)
+    return f"Scheduling Specialist response: {result.final_output}"
 ```
 
-### Coordination Patterns
-
-#### Sequential Coordination
-```python
-# Agent handoff pattern
-async def handle_complex_request(message: str, user_id: str):
-    # First, determine the required operations
-    analysis = await analysis_agent.analyze_request(message, user_id)
-
-    # Then, execute with specialized agents
-    if analysis.requires_scheduling:
-        result = await scheduling_agent.schedule(analysis.scheduling_data, user_id)
-
-    if analysis.requires_crud:
-        result = await crud_agent.execute_crud(analysis.crud_data, user_id)
-```
-
-#### Hierarchical Coordination
-```python
-# Master coordinator agent
-COORDINATOR_AGENT = Agent(
-    name="TodoCoordinator",
-    instructions="Coordinate between specialized agents...",
-    tools=coordination_tools,
-)
-```
+This pattern allows for:
+*   **Separation of Concerns**: Each agent focuses on a specific domain.
+*   **Reduced Context Window**: Sub-agents only see relevant tools and instructions.
+*   **Modular Scalability**: New specialists can be added without retraining the main agent.
 
 ## Agent Error Handling and Recovery
 

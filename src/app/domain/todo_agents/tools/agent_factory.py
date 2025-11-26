@@ -6,26 +6,22 @@ todo agent with all necessary tools and configurations.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from agents import Agent
+from agents.extensions.models.litellm_model import LitellmModel
 
 from app.config import get_settings
 
-from .system_instructions import TODO_SYSTEM_INSTRUCTIONS
-from .tool_definitions import get_tool_definitions
-
-if TYPE_CHECKING:
-    from agents import Agent, Tool
+from .specialized_agents import get_crud_agent, get_scheduling_agent
+from .system_instructions import ORCHESTRATOR_INSTRUCTIONS
+from .tool_definitions import get_utility_tools
 
 __all__ = [
     "get_todo_agent",
 ]
 
 
-def get_todo_agent() -> Agent:
+def get_todo_agent(*, instructions: str | None = None) -> Agent:
     """Create and return a configured todo agent with LiteLLM."""
-    from agents import Agent
-    from agents.extensions.models.litellm_model import LitellmModel
-
     settings = get_settings()
 
     model = LitellmModel(
@@ -34,11 +30,32 @@ def get_todo_agent() -> Agent:
         base_url=settings.ai.GLM_BASE_URL,
     )
 
-    tools = cast("list[Tool]", list(get_tool_definitions()))
+    # Build specialized agents that will be exposed as tools
+    scheduling_agent = get_scheduling_agent()
+    crud_agent = get_crud_agent()
+
+    tools = [
+        *get_utility_tools(),
+        scheduling_agent.as_tool(
+            tool_name="scheduling_specialist",
+            tool_description=(
+                "Handles schedule analysis, conflict detection, and intelligent "
+                "time allocation for tasks. Use this when you need to find or "
+                "optimize time slots."
+            ),
+        ),
+        crud_agent.as_tool(
+            tool_name="crud_specialist",
+            tool_description=(
+                "Handles creating, updating, deleting, and listing todos. Use "
+                "this when you need to modify or inspect todo items."
+            ),
+        ),
+    ]
 
     return Agent(
         name="TodoAssistant",
-        instructions=TODO_SYSTEM_INSTRUCTIONS,
+        instructions=instructions or ORCHESTRATOR_INSTRUCTIONS,
         model=model,
         tools=tools,
     )

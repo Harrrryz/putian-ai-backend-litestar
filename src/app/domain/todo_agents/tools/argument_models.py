@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 __all__ = [
     "AnalyzeScheduleArgs",
     "BatchUpdateScheduleArgs",
+    "ConsultCrudAgentArgs",
+    "ConsultSchedulerArgs",
     "CreateTodoArgs",
     "DeleteTodoArgs",
     "GetTodoListArgs",
@@ -101,22 +103,39 @@ class DeleteTodoArgs(BaseModel):
 
 class UpdateTodoArgs(BaseModel):
     todo_id: str = Field(...,
-                         description="The UUID of the todo item to update")
+                         description="The UUID of the todo item to update.")
     item: str | None = Field(
         default=None, description="The new name/title of the todo item")
     description: str | None = Field(
         default=None, description="The new description/content of the todo item")
     alarm_time: str | None = Field(
-        default=None, description="The new planned date/time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD, can be None if not specified"
+        default=None,
+        description="The new alarm time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD",
     )
     start_time: str | None = Field(
         default=None, description="The new start time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD")
     end_time: str | None = Field(
         default=None, description="The new end time for the todo in format YYYY-MM-DD HH:MM:SS or YYYY-MM-DD")
+    tags: list[str] | None = Field(
+        default=None, description="List of tag names to associate with the todo")
     importance: str | None = Field(
-        default=None, description="The new importance level: none, low, medium, high")
+        default=None, description="The importance level: none, low, medium, high")
     timezone: str | None = Field(
         default=None, description="Timezone for date parsing (e.g., 'America/New_York', 'Asia/Shanghai'). If not provided, UTC is used."
+    )
+    is_completed: bool | None = Field(
+        default=None, description="Whether the todo is completed")
+
+
+class ConsultSchedulerArgs(BaseModel):
+    request: str = Field(
+        ..., description="The natural language request for the scheduling specialist. Be specific about what needs to be scheduled or analyzed."
+    )
+
+
+class ConsultCrudAgentArgs(BaseModel):
+    request: str = Field(
+        ..., description="The natural language request for the CRUD assistant. Be specific about what needs to be created, updated, or deleted."
     )
 
 
