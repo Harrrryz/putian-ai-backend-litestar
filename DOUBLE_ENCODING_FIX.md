@@ -34,7 +34,7 @@ Added a preprocessing step (`_preprocess_args` function) that:
 
 ### Code Changes
 
-**File**: `src/app/domain/todo_agents/tools/tool_implementations.py`
+**File**: `src/app/domain/todo_agents/tools/todo_crud_tools.py`
 
 1. **Added imports**: Added `json` to the imports at the top of the file
 
@@ -62,7 +62,7 @@ def _preprocess_args(args: str) -> str:
 
 3. **Updated tool implementations**:
    - `create_todo_impl`: Added `args = _preprocess_args(args)` before parsing
-   - `schedule_todo_impl`: Added `args = _preprocess_args(args)` before parsing
+   - `schedule_todo_impl`: The scheduling module imports `_preprocess_args` and applies it before parsing
 
 These are the two functions that accept `tags` parameters which could be double-encoded.
 

@@ -35,6 +35,10 @@ class AgentTodoRequest(PydanticBaseModel):
         None, description="Optional session ID for conversation persistence")
     session_name: str | None = Field(
         None, description="Optional human-readable session name")
+    agent_name: str | None = Field(
+        None,
+        description="Optional agent name to route the request (defaults to TodoAssistant)",
+    )
 
 
 class AgentTodoResponse(PydanticBaseModel):

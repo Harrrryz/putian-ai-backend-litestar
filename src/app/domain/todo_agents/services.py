@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 from app.lib.exceptions import RateLimitExceededException
 
-from .tools.agent_factory import get_todo_agent
+from .tools.agent_factory import get_agent_by_name
 from .tools.tool_context import set_agent_context
 
 __all__ = (
@@ -65,6 +65,7 @@ class TodoAgentService:
         user_id: str,
         message: str,
         session_id: str | None = None,
+        agent_name: str = "TodoAssistant",
     ) -> str:
         """Send a message to the todo agent and get a response with persistent conversation history.
 
@@ -72,6 +73,7 @@ class TodoAgentService:
             user_id: ID of the user sending the message
             message: The message to send to the agent
             session_id: Optional session ID. If None, a new unique session ID will be generated
+            agent_name: Optional agent name to route to a specialized agent. Defaults to TodoAssistant.
 
         Returns:
             The agent's response, or an error message if user has exceeded their monthly quota
@@ -105,8 +107,8 @@ class TodoAgentService:
 
         session = self._sessions[session_id]
 
-        # Get the todo agent (with tools)
-        agent = get_todo_agent()
+        # Get the requested todo agent (with tools)
+        agent = get_agent_by_name(agent_name)
 
         # Run the agent with session - conversation history is automatically managed!
         result = await Runner.run(agent, message, session=session, max_turns=20)
@@ -120,6 +122,7 @@ class TodoAgentService:
         session_id: str | None = None,
         *,
         history_limit: int = 10,
+        agent_name: str = "TodoAssistant",
     ) -> "AsyncGenerator[dict[str, Any], None]":
         """Stream agent responses as structured events.
 
@@ -129,6 +132,7 @@ class TodoAgentService:
             session_id: Optional existing session identifier.
             history_limit: Maximum number of history items to include in the
                 final history event.
+            agent_name: Optional agent name to route to a specialized agent. Defaults to TodoAssistant.
 
         Yields:
             Dictionaries containing ``event`` and ``data`` keys suitable for
@@ -165,8 +169,8 @@ class TodoAgentService:
 
         session = self._sessions[session_id]
 
-        # Get the todo agent (with tools)
-        agent = get_todo_agent()
+        # Get the requested todo agent (with tools)
+        agent = get_agent_by_name(agent_name)
 
         stream = Runner.run_streamed(
             agent,

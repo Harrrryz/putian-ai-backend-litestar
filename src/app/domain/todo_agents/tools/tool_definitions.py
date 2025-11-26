@@ -24,31 +24,47 @@ from .argument_models import (
     ScheduleTodoArgs,
     UpdateTodoArgs,
 )
-from .tool_implementations import (
+from .todo_crud_tools import create_todo_impl, delete_todo_impl, update_todo_impl
+from .todo_schedule_tools import (
     analyze_schedule_impl,
     batch_update_schedule_impl,
-    create_todo_impl,
-    delete_todo_impl,
     get_todo_list_impl,
-    get_user_quota_impl,
     schedule_todo_impl,
-    update_todo_impl,
 )
+from .todo_support_tools import get_user_quota_impl
 from .universal_tools import get_user_datetime_impl
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from agents import FunctionTool
 
 __all__ = [
     "get_tool_definitions",
+    "get_crud_tool_definitions",
+    "get_schedule_tool_definitions",
+    "get_support_tool_definitions",
 ]
 
 
-def get_tool_definitions() -> Sequence[FunctionTool]:
-    """Return the list of FunctionTool definitions for the todo agent."""
+def _build_tool_objects() -> dict[str, FunctionTool]:
+    """Create FunctionTool objects for all available todo tools."""
     from agents import FunctionTool
+
+    get_user_datetime_tool = FunctionTool(
+        name="get_user_datetime",
+        description=(
+            "Get the user's current date, time, and timezone information. "
+            "Use this tool before performing any time-based operations."
+        ),
+        params_json_schema=GetUserDatetimeArgs.model_json_schema(),
+        on_invoke_tool=get_user_datetime_impl,
+    )
+
+    get_user_quota_tool = FunctionTool(
+        name="get_user_quota",
+        description=(
+            "Get the user's current agent usage quota information including used requests, remaining quota, "
+            "and reset date."
+        ),
+        params_json_schema=GetUserQuotaArgs.model_json_schema(),
+        on_invoke_tool=get_user_quota_impl,
+    )
 
     create_todo_tool = FunctionTool(
         name="create_todo",
@@ -99,28 +115,80 @@ def get_tool_definitions() -> Sequence[FunctionTool]:
         on_invoke_tool=batch_update_schedule_impl,
     )
 
-    get_user_datetime_tool = FunctionTool(
-        name="get_user_datetime",
-        description="Get the user's current date, time, and timezone information. Use this tool before performing any time-based operations.",
-        params_json_schema=GetUserDatetimeArgs.model_json_schema(),
-        on_invoke_tool=get_user_datetime_impl,
-    )
+    return {
+        "get_user_datetime": get_user_datetime_tool,
+        "get_user_quota": get_user_quota_tool,
+        "create_todo": create_todo_tool,
+        "delete_todo": delete_todo_tool,
+        "update_todo": update_todo_tool,
+        "get_todo_list": get_todo_list_tool,
+        "analyze_schedule": analyze_schedule_tool,
+        "schedule_todo": schedule_todo_tool,
+        "batch_update_schedule": batch_update_schedule_tool,
+    }
 
-    get_user_quota_tool = FunctionTool(
-        name="get_user_quota",
-        description="Get the user's current agent usage quota information including used requests, remaining quota, and reset date.",
-        params_json_schema=GetUserQuotaArgs.model_json_schema(),
-        on_invoke_tool=get_user_quota_impl,
-    )
 
+def _get_universal_tools(tool_map: dict[str, FunctionTool]) -> list[FunctionTool]:
+    return [tool_map["get_user_datetime"]]
+
+
+def _get_crud_tools(tool_map: dict[str, FunctionTool]) -> list[FunctionTool]:
     return [
-        get_user_datetime_tool,  # Universal tool should be first
-        get_user_quota_tool,  # Quota information tool
-        create_todo_tool,
-        delete_todo_tool,
-        update_todo_tool,
-        get_todo_list_tool,
-        analyze_schedule_tool,
-        schedule_todo_tool,
-        batch_update_schedule_tool,
+        tool_map["create_todo"],
+        tool_map["delete_todo"],
+        tool_map["update_todo"],
     ]
+
+
+def _get_schedule_tools(tool_map: dict[str, FunctionTool]) -> list[FunctionTool]:
+    return [
+        tool_map["get_todo_list"],
+        tool_map["analyze_schedule"],
+        tool_map["schedule_todo"],
+        tool_map["batch_update_schedule"],
+    ]
+
+
+def _get_support_tools(tool_map: dict[str, FunctionTool]) -> list[FunctionTool]:
+    return [tool_map["get_user_quota"]]
+
+
+def get_tool_definitions() -> Sequence[FunctionTool]:
+    """Return the full list of FunctionTool definitions for the combined todo agent."""
+    tools = _build_tool_objects()
+    return [
+        *_get_universal_tools(tools),
+        *_get_support_tools(tools),
+        *_get_crud_tools(tools),
+        *_get_schedule_tools(tools),
+    ]
+
+
+def get_crud_tool_definitions(include_universal: bool = True) -> Sequence[FunctionTool]:
+    """Return FunctionTool definitions for CRUD-only agents."""
+    tools = _build_tool_objects()
+    result: list[FunctionTool] = []
+    if include_universal:
+        result.extend(_get_universal_tools(tools))
+    result.extend(_get_crud_tools(tools))
+    return result
+
+
+def get_schedule_tool_definitions(include_universal: bool = True) -> Sequence[FunctionTool]:
+    """Return FunctionTool definitions for scheduling/search agents."""
+    tools = _build_tool_objects()
+    result: list[FunctionTool] = []
+    if include_universal:
+        result.extend(_get_universal_tools(tools))
+    result.extend(_get_schedule_tools(tools))
+    return result
+
+
+def get_support_tool_definitions(include_universal: bool = True) -> Sequence[FunctionTool]:
+    """Return FunctionTool definitions for supporting/other agents."""
+    tools = _build_tool_objects()
+    result: list[FunctionTool] = []
+    if include_universal:
+        result.extend(_get_universal_tools(tools))
+    result.extend(_get_support_tools(tools))
+    return result

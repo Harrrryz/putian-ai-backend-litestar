@@ -94,8 +94,9 @@ The OpenAI Agents SDK integration provides several key advantages:
 
 ### Documentation
 
-- **[OpenAI Agents Integration Guide](docs/OPENAI_AGENTS_INTEGRATION.md)** - Complete integration documentation
-- **[Example Usage](examples/agent_session_example.py)** - Working examples and usage patterns
+- **[Agent Tool Implementation](AGENT_TOOLING.md)** - How tools are organized across CRUD, scheduling, and supporting agents
+- **[AGENTS.md](AGENTS.md)** - Collaboration and contribution guidelines for the todo agents
+- **[Agent Tools Architecture Guide](docs/AGENT_TOOLS_ARCHITECTURE_GUIDE.md)** - Tool modules, agent variants, and API routing via `agent_name`
 
 ### Implementation Details
 

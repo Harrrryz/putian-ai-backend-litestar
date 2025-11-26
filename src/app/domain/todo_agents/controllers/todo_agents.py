@@ -67,6 +67,7 @@ class TodoAgentController(Controller):
     ) -> AgentTodoResponse | RateLimitErrorResponse:
         """Create a todo using AI agent with persistent conversation sessions."""
         try:
+            agent_name = data.agent_name or "TodoAssistant"
             # Generate session ID if not provided
             session_id = data.session_id or f"user_{current_user.id}_todo_agent"
 
@@ -97,6 +98,7 @@ class TodoAgentController(Controller):
                 user_id=str(current_user.id),
                 message=user_message,
                 session_id=session_id,
+                agent_name=agent_name,
             )
 
             # Get the conversation history to return as agent_response
@@ -142,6 +144,7 @@ class TodoAgentController(Controller):
         """Stream todo agent responses as Server-Sent Events."""
 
         session_id = data.session_id
+        agent_name = data.agent_name or "TodoAssistant"
 
         def _serialize_payload(payload: Any) -> str:
             if isinstance(payload, bytes):
@@ -182,6 +185,7 @@ class TodoAgentController(Controller):
                     user_id=str(current_user.id),
                     message=user_message,
                     session_id=session_id,
+                    agent_name=agent_name,
                 ):
                     event_name = payload.get("event", "message")
                     event_data = _serialize_payload(payload.get("data"))
