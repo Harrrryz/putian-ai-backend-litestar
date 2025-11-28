@@ -144,8 +144,8 @@ def _get_schedule_tools(tool_map: dict[str, FunctionTool]) -> list[FunctionTool]
     return [
         tool_map["get_todo_list"],
         tool_map["analyze_schedule"],
-        tool_map["schedule_todo"],
-        tool_map["batch_update_schedule"],
+        # tool_map["schedule_todo"],
+        # tool_map["batch_update_schedule"],
     ]
 
 
