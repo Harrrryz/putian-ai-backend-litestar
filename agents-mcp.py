@@ -11,7 +11,7 @@ load_dotenv()
 
 async def main() -> None:
     glm_model = LitellmModel(
-        model="openai/glm-4.5",
+        model="openai/glm-4.6",
         api_key=os.getenv("GLM_API_KEY"),
         base_url=os.getenv("GLM_BASE_URL"),
     )
