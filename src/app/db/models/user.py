@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .agent_session import AgentSession
     from .email_verification_token import EmailVerificationToken
     from .oauth_account import UserOauthAccount
+    from .password_reset_token import PasswordResetToken
     from .tag import Tag
     from .todo import Todo
     from .user_role import UserRole
@@ -76,6 +77,12 @@ class User(UUIDAuditBase):
         cascade="all, delete-orphan",
     )
     verification_tokens: Mapped[list[EmailVerificationToken]] = relationship(
+        back_populates="user",
+        lazy="noload",
+        uselist=True,
+        cascade="all, delete-orphan",
+    )
+    password_reset_tokens: Mapped[list[PasswordResetToken]] = relationship(
         back_populates="user",
         lazy="noload",
         uselist=True,

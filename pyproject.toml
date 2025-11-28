@@ -31,6 +31,7 @@ dependencies = [
   "pytest>=8.3.5",
   "boto3>=1.38.45",
   "openai-agents[litellm]>=0.1.0",
+  "ace-framework>=0.2.0",
 ]
 description = "Opinionated template for a Litestar application."
 keywords = ["litestar", "sqlalchemy", "alembic", "fullstack", "api", "asgi", "litestar"]

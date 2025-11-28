@@ -2,22 +2,35 @@
 
 from __future__ import annotations
 
+import json
+from importlib import import_module
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
 import structlog
 from litestar import Controller, delete, get, post
 from litestar.di import Provide
 from litestar.params import Dependency
+from litestar.response import ServerSentEvent, ServerSentEventMessage
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
     import app.db.models as m
     from app.domain.quota.services import UserUsageQuotaService
     from app.domain.todo_agents.services import TodoAgentService
     from app.lib.rate_limit_service import RateLimitService
-    from sqlalchemy.ext.asyncio import AsyncSession
+else:
+    RateLimitService = import_module(
+        "app.lib.rate_limit_service").RateLimitService
+
 from app.domain.todo.deps import provide_tag_service, provide_todo_service
 from app.domain.todo_agents import urls
-from app.domain.todo_agents.deps import provide_rate_limit_service, provide_todo_agent_service, provide_user_usage_quota_service
+from app.domain.todo_agents.deps import (
+    provide_rate_limit_service,
+    provide_todo_agent_service,
+    provide_user_usage_quota_service,
+)
 from app.domain.todo_agents.schemas import (
     AgentTodoRequest,
     AgentTodoResponse,
@@ -25,7 +38,6 @@ from app.domain.todo_agents.schemas import (
     UsageStatsResponse,
 )
 from app.lib.exceptions import RateLimitExceededException
-from app.lib.rate_limit_service import RateLimitService
 
 logger = structlog.get_logger()
 
@@ -55,6 +67,7 @@ class TodoAgentController(Controller):
     ) -> AgentTodoResponse | RateLimitErrorResponse:
         """Create a todo using AI agent with persistent conversation sessions."""
         try:
+            agent_name = data.agent_name or "TodoAssistant"
             # Generate session ID if not provided
             session_id = data.session_id or f"user_{current_user.id}_todo_agent"
 
@@ -85,6 +98,7 @@ class TodoAgentController(Controller):
                 user_id=str(current_user.id),
                 message=user_message,
                 session_id=session_id,
+                agent_name=agent_name,
             )
 
             # Get the conversation history to return as agent_response
@@ -119,6 +133,95 @@ class TodoAgentController(Controller):
                 message=f"Failed to process todo with AI agent: {e!s}",
                 agent_response=[]
             )
+
+    @post(path="/agent-create/stream", operation_id="agent_create_todo_stream")
+    async def agent_create_todo_stream(
+        self,
+        current_user: m.User,
+        data: AgentTodoRequest,
+        todo_agent_service: Annotated["TodoAgentService", Dependency(skip_validation=True)],
+    ) -> ServerSentEvent:
+        """Stream todo agent responses as Server-Sent Events."""
+
+        session_id = data.session_id
+        agent_name = data.agent_name or "TodoAssistant"
+
+        def _serialize_payload(payload: Any) -> str:
+            if isinstance(payload, bytes):
+                return payload.decode()
+            if isinstance(payload, str):
+                return payload
+            return json.dumps(payload, default=str)
+
+        async def event_stream() -> "AsyncGenerator[ServerSentEventMessage, None]":
+            if not data.messages:
+                yield ServerSentEventMessage(
+                    event="error",
+                    data=_serialize_payload({
+                        "status": "error",
+                        "message": "No messages provided",
+                    }),
+                )
+                return
+
+            user_message = ""
+            for msg in reversed(data.messages):
+                if msg.get("role") == "user":
+                    user_message = msg.get("content", "")
+                    break
+
+            if not user_message:
+                yield ServerSentEventMessage(
+                    event="error",
+                    data=_serialize_payload({
+                        "status": "error",
+                        "message": "No user message found in messages",
+                    }),
+                )
+                return
+
+            try:
+                async for payload in todo_agent_service.stream_chat_with_agent(
+                    user_id=str(current_user.id),
+                    message=user_message,
+                    session_id=session_id,
+                    agent_name=agent_name,
+                ):
+                    event_name = payload.get("event", "message")
+                    event_data = _serialize_payload(payload.get("data"))
+                    yield ServerSentEventMessage(event=event_name, data=event_data)
+            except RateLimitExceededException as exc:
+                logger.warning(
+                    "Rate limit exceeded during streaming",
+                    user_id=current_user.id,
+                    current_usage=exc.current_usage,
+                    monthly_limit=exc.monthly_limit,
+                )
+                yield ServerSentEventMessage(
+                    event="rate_limit_exceeded",
+                    data=_serialize_payload({
+                        "message": exc.detail,
+                        "current_usage": exc.current_usage,
+                        "monthly_limit": exc.monthly_limit,
+                        "reset_date": exc.reset_date.isoformat() if exc.reset_date else None,
+                        "remaining_quota": max(0, exc.monthly_limit - exc.current_usage),
+                    }),
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.exception(
+                    "Agent todo streaming failed",
+                    error=str(exc),
+                    user_id=current_user.id,
+                )
+                yield ServerSentEventMessage(
+                    event="error",
+                    data=_serialize_payload({
+                        "status": "error",
+                        "message": f"Failed to stream todo with AI agent: {exc!s}",
+                    }),
+                )
+
+        return ServerSentEvent(event_stream())
 
     @get(path="/agent-sessions", operation_id="list_agent_sessions")
     async def list_agent_sessions(
@@ -251,12 +354,13 @@ class TodoAgentController(Controller):
             logger.exception("Failed to get usage stats",
                              error=str(e), user_id=current_user.id)
             # Return default stats in case of error
-            from datetime import datetime, timezone
+            now = datetime.now(UTC)
             return UsageStatsResponse(
-                current_month=datetime.now(timezone.utc).strftime("%Y-%m"),
+                current_month=now.strftime("%Y-%m"),
                 usage_count=0,
                 monthly_limit=200,
                 remaining_quota=200,
-                reset_date=datetime.now(timezone.utc).replace(
-                    day=1, hour=0, minute=0, second=0, microsecond=0),
+                reset_date=now.replace(
+                    day=1, hour=0, minute=0, second=0, microsecond=0,
+                ),
             )
